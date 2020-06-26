@@ -4,7 +4,7 @@ from PIL import Image, ImageDraw
 from os import path
 
 class Extractor:
-    def __init__(self, name='image', threshold=200, min_size=50):
+    def __init__(self, name='image', threshold=240, min_size=100):
         self.name = name
         self.threshold = threshold
         self.min_size = min_size

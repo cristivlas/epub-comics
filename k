@@ -1,6 +1,9 @@
 #! /usr/bin/env bash
-
-out=${1/.epub/.mobi}
-kindle/kindlegen $1 -o temp.mobi -verbose
-ebook-convert temp.mobi $out --mobi-file-type both
-rm -f temp.mobi
+in=$1
+out=${in/.epub/.mobi}
+shift 1
+temp_file=$(mktemp tmp-XXXXX.mobi)
+echo $temp_file
+kindle/kindlegen $in -o $temp_file $@
+ebook-convert $temp_file $out --mobi-file-type new
+rm -f $temp_file

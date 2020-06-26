@@ -48,10 +48,6 @@ class Panel:
     
     def max_scale(self, client_size):
         scale = min([i / j for i, j in zip(client_size, self.xywh[2:])])
-        # _,_,w,h = self.xywh
-        # if w > 2*h:
-        #     scale *= 2
-        #print(scale)    
         return scale
 
     # box
@@ -88,26 +84,39 @@ def panel_id(page, ordinal):
     return '{}-{}'.format(page, ordinal)
 
 class ImagePage:
-    def _set_panels(self, img:Image, panels):
-        for n,(panel_img,xy) in panels:
+    def _set_panels(self, args, img:Image, panels):
+        i = 1
+        r = args.split_ratio
+        for _,(panel_img,xy) in panels:
             assert len(xy)==2, xy            
-            self.panels[int(n)+1] = Panel(self.filename, img, xy, panel_img.size)
+            w,h = panel_img.size
+            # split wide panels
+            if w > 2 * h:
+                self.panels[int(i)] = Panel(self.filename, img, xy, (r*w, h))
+                i += 1
+                self.panels[int(i)] = Panel(self.filename, img, [xy[0] + r * w, xy[1]], [(1.0 - r) * w, h])
+                i += 1
+            else:
+                self.panels[int(i)] = Panel(self.filename, img, xy, panel_img.size)
+                i += 1
 
-    def _trim(self, img, panels, min_size, bg):
+    def _trim(self, args, min_size, img, panels, bg):
         if len(panels) <= 1:
-            self._set_panels(img, panels)
+            self._set_panels(args, img, panels)
             return img
         
         # heuristic
-        if not TRIM_MARGINS or len(panels) <= 3:
-            page = Image.new('RGB', img.size, bg)    
-            page.paste(img, (0,0))
+        few_panels = len(panels) <= 3
+        if not TRIM_MARGINS or few_panels:
+            page = Image.new('RGBA', img.size, bg) 
+            if few_panels:
+                page.paste(img, (0,0))
             for _,(panel_img,xy) in panels:
                 assert len(xy)==2, xy
                 page.paste(panel_img, xy[:2])
                 assert len(xy)==2, xy
 
-            self._set_panels(page, panels)
+            self._set_panels(args, page, panels)
 
         else:
             points = []
@@ -121,33 +130,36 @@ class ImagePage:
             bottom_right = points[-1]
             size = [i-j+2*margin for i, j in zip(bottom_right, top_left)]
             
-            page = Image.new('RGB', size, bg)
+            page = Image.new('RGBA', size, bg)
             for _,(img,xy) in panels:
                 page.paste(img, [i-j+margin for i, j in zip(xy, top_left)])
 
-            panels = Extractor('', min_size=min_size).panels_from_image(page).items()
-            self._set_panels(page, panels)        
+            panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(page).items()
+            self._set_panels(args, page, panels)        
 
         return page
 
-    def _make_page(self, filename):        
+    def _make_page(self, args, filename):        
         img = Extractor.open(filename)        
 
-        #todo: command line arg
-        #bg = detect_background_color(img)            
-        bg = 'black'
+        if args.bg:
+            bg = args.bg
+            if bg.lower()=='none':
+                bg=None
+        else:
+            bg = detect_background_color(img)            
 
         #rotate
         if img.size[0] > img.size[1]:
             img = img.rotate(90, expand=True)        
         #
-        # heuristic; TODO: command line arg?
+        # heuristic;
         #
-        min_size = min(img.size)/8
-        panels = Extractor('', min_size=min_size).panels_from_image(img).items()    
-        return self._trim(img, panels, min_size, bg), bg
+        min_size = min(img.size)/args.min_size
+        panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(img).items()    
+        return self._trim(args, min_size, img, panels, bg), bg
 
-    def __init__(self, filename, output_dir, client_size):
+    def __init__(self, args, filename, output_dir, client_size):
         self.output_dir = output_dir
         self.client_size = client_size        
         self.panels = {}
@@ -159,7 +171,7 @@ class ImagePage:
         images_dir = path.join(output_dir, images_dir)
         makedirs(images_dir, exist_ok=True)
 
-        page, bg = self._make_page(filename)
+        page, bg = self._make_page(args, filename)
         page.save(path.join(output_dir, self.filename), dpi=(300, 300))    
 
         self.size = page.size
@@ -172,9 +184,13 @@ class ImagePage:
         return None
 
     def create_bg_image_file(self, dir, bg_color):
+        if not bg_color:
+           print ('defaulting to white background') 
+           bg_color = 'white'
+
         fpath = path.join(dir, 'bg.png')
         if not path.exists(fpath):
-            bg = Image.new('RGB', self.client_size, bg_color)
+            bg = Image.new('RGBA', self.client_size, bg_color)
             bg.save(fpath)
 
     def gen_empty_html(self, root_name):    
@@ -525,12 +541,13 @@ if __name__ == '__main__':
     parser.add_argument('input_dir', help='input dir')
     parser.add_argument('-a', '--author')
     parser.add_argument('-c', '--cover')
+    parser.add_argument('-s', '--split-ratio', type=float, default=0.5)
     parser.add_argument('-t', '--title')
-    parser.add_argument('--trim', action='store_true')
-    parser.add_argument('--js', action='store_true')
-
-    #TODO
-    #parser.add_argument('--threshold', default=200, help='panel detection threshold')
+    parser.add_argument('--trim', action='store_true', help='trim margins')
+    parser.add_argument('--js', action='store_true', help='embed Javascript')
+    parser.add_argument('--threshold', type=int, default=200, help='panel detection threshold')
+    parser.add_argument('--min-size', type=int, default=8)
+    parser.add_argument('--bg')
 
     args = parser.parse_args()
     TRIM_MARGINS = args.trim
@@ -538,7 +555,8 @@ if __name__ == '__main__':
     # Kindle 7
     #client_size=(600, 1024)
     #client_size=(960, 1280)
-    client_size=(480, 640)
+    #client_size=(480, 640)
+    client_size=(500, 900)
     #
     # TODO: ParseArgs, client_size etc.
     #
@@ -580,7 +598,7 @@ if __name__ == '__main__':
             f = path.join(input_dir, f)
             if path.realpath(f)==path.realpath(args.cover):
                 continue
-            page = ImagePage(f, output_dir, client_size)
+            page = ImagePage(args, f, output_dir, client_size)
             i = len(pages)
             pages.append(page.gen_html('page-{}'.format(i)))
 
