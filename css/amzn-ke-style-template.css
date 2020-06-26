@@ -1,0 +1,130 @@
+html {
+  color:#000;
+  background:#FFF;
+  margin:0;
+  padding:0;
+}
+body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pre,code,form,fieldset,legend,input,textarea,p,blockquote,th,td {
+  margin:0;
+  padding:0;
+}
+
+table{
+  border-collapse:collapse;
+  border-spacing:0;
+}
+fieldset,img {
+  border:0;
+}
+address,caption,cite,code,dfn,em,strong,th,var {
+  font-style:normal;
+  font-weight:normal;
+}
+li {
+  list-style:none;
+}
+caption,th {
+  text-align:left;
+}
+h1,h2,h3,h4,h5,h6{
+  font-size:100%;
+  font-weight:normal;
+}
+q:before,q:after{
+  content:'';
+}
+abbr,acronym{
+  border:0;font-variant:normal;
+}
+sup {
+  vertical-align:text-top;
+}
+sub {
+  vertical-align:text-bottom;
+}
+input,textarea,select {
+  font-family:inherit;
+  font-size:inherit;
+  font-weight:inherit;
+}
+input,textarea,select {
+  font-size:100%;
+}
+legend{
+  color:#000;
+}
+
+div.fs {
+  position: relative;
+
+}
+
+div.fs a {
+  display: block;
+  width : 100%;
+  height: 100%;
+}
+
+div.fs div {
+    position: absolute;
+}
+
+/* TEMPORARY */
+.app-amzn-magnify div {
+    display:none;
+}
+
+.app-amzn-magnify div.target-mag {
+    display:none;
+}
+
+img.singlePage {
+  position: absolute;
+}
+
+
+div.target-mag {
+  /* Box model */
+  position: absolute;
+  display: block; /* !!COMICS!! The image is always visible, it's the target-mag-parent element that controls visiblity */
+  overflow: hidden;
+  /* UI Styling */
+  /* border: 4px solid  #000000;
+  background-color:#fff; */
+}
+
+/* !!COMICS!!
+ Parent container that hosts both the light box and the image.
+ Is required as the light box needs an opacity independent of the the image.
+*/
+div.target-mag-parent {
+    width:100%;
+    height:100%;
+    display:none;
+    /* overflow:auto; */
+}
+
+/* !!COMICS!!
+  Light box only.
+*/
+/* div.target-mag-lb {
+    width:100%;
+    height:100%;
+    background: #333333;
+    opacity:.8;
+} */
+
+div.target-mag img {
+  position: absolute;
+}
+
+div.fs div.target-mag-text {
+    position: absolute;
+    height: 100%;
+    width: 100%;
+}
+
+div.target-mag-text div {
+    position: relative;
+}
+

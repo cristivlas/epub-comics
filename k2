@@ -1,0 +1,4 @@
+#! /usr/bin/env bash
+
+out=${1/.epub/.mobi}
+ebook-convert $1 $out --mobi-file-type both
