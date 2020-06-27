@@ -1,4 +1,6 @@
 #! /usr/bin/env bash
 
+# use Calibre's conversion tool .epub --> Amazon .kf8
+
 out=${1/.epub/.mobi}
 ebook-convert $1 $out --mobi-file-type both

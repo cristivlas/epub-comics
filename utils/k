@@ -1,9 +1,15 @@
 #! /usr/bin/env bash
+
+# 1. run kindlegen over .epub input
+#
+# 2. run Calibre's converter utility to convert .mobi to new kf8 format
+#
 in=$1
 out=${in/.epub/.mobi}
+dir=$(dirname $0)
 shift 1
 temp_file=$(mktemp tmp-XXXXX.mobi)
 echo $temp_file
-kindle/kindlegen $in -o $temp_file $@
+$dir/kindle/kindlegen $in -o $temp_file $@
 ebook-convert $temp_file $out --mobi-file-type new
 rm -f $temp_file

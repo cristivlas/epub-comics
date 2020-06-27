@@ -1,0 +1,6 @@
+kindle
+__pycache__
+*.epub
+*-epub
+*.mobi
+*.kf8

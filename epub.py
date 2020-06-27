@@ -1,4 +1,8 @@
+#
+# Generate .epub from folder of comics, one image file per page
+#
 import argparse
+import contextlib
 import numpy as np
 import shutil
 import uuid
@@ -6,7 +10,7 @@ import warnings
 import zipfile
 
 from bs4 import BeautifulSoup
-from os import listdir, makedirs, path, rename, walk
+from os import chdir, getcwd, listdir, makedirs, path, rename, walk
 from panels import Extractor
 from xml.dom import minidom
 from lxml import etree as ET
@@ -14,6 +18,16 @@ from PIL import Image
 from pathvalidate import sanitize_filepath
 
 TRIM_MARGINS = True
+
+@contextlib.contextmanager
+def pushd(new_dir):
+    previous_dir = getcwd()
+    if new_dir:
+        chdir(new_dir)
+    try:
+        yield
+    finally:
+        chdir(previous_dir)
 
 def scale_perc(x, scale, size):
     return '{}%'.format(round(100*x*scale/size, 2))
@@ -50,7 +64,7 @@ class Panel:
         scale = min([i / j for i, j in zip(client_size, self.xywh[2:])])
         return scale
 
-    # box
+    # box (magTarget)
     def zoom_target_box(self, scale, client_size):
         _,_,w,h = self.xywh
         return {
@@ -60,16 +74,13 @@ class Panel:
             'height': scale_perc(h, scale, client_size[1]),
         }
 
-    # content
+    # content (magTarget img)
     def zoom_target_img_box(self, scale, client_size):
         x,y,w,h = self.xywh
         new_size = [i*scale for i in self.img_size]                
         style = {
             'top': '{}%'.format(round(-y*100/h, 2)),
             'left': '{}%'.format(round(-x*100/w, 2)),
-
-            #'top': '{}px'.format(-int(y*scale)),
-            #'left': '{}px'.format(-int(x*scale)),                        
 
             'width':'{}px'.format(int(new_size[0])),
             'height':'{}px'.format(int(new_size[1])),
@@ -84,21 +95,18 @@ def panel_id(page, ordinal):
     return '{}-{}'.format(page, ordinal)
 
 class ImagePage:
-    def _set_panels(self, args, img:Image, panels):
-        i = 1
+    def _set_panels(self, args, img:Image, panels:dict):
         r = args.split_ratio
-        for _,(panel_img,xy) in panels:
+        for panel_name in sorted(panels.keys()):
+            panel_img, xy = panels[panel_name]
             assert len(xy)==2, xy            
             w,h = panel_img.size
             # split wide panels
-            if w > 2 * h:
-                self.panels[int(i)] = Panel(self.filename, img, xy, (r*w, h))
-                i += 1
-                self.panels[int(i)] = Panel(self.filename, img, [xy[0] + r * w, xy[1]], [(1.0 - r) * w, h])
-                i += 1
+            if r > 0 and w > 2 * h:
+                self.panels.append(Panel(self.filename, img, xy, (r*w, h)))
+                self.panels.append(Panel(self.filename, img, [xy[0] + r * w, xy[1]], [(1.0 - r) * w, h]))
             else:
-                self.panels[int(i)] = Panel(self.filename, img, xy, panel_img.size)
-                i += 1
+                self.panels.append(Panel(self.filename, img, xy, panel_img.size))
 
     def _trim(self, args, min_size, img, panels, bg):
         if len(panels) <= 1:
@@ -111,7 +119,7 @@ class ImagePage:
             page = Image.new('RGBA', img.size, bg) 
             if few_panels:
                 page.paste(img, (0,0))
-            for _,(panel_img,xy) in panels:
+            for _,(panel_img,xy) in panels.items():
                 assert len(xy)==2, xy
                 page.paste(panel_img, xy[:2])
                 assert len(xy)==2, xy
@@ -134,13 +142,16 @@ class ImagePage:
             for _,(img,xy) in panels:
                 page.paste(img, [i-j+margin for i, j in zip(xy, top_left)])
 
-            panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(page).items()
+            panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(page)
             self._set_panels(args, page, panels)        
 
         return page
 
     def _make_page(self, args, filename):        
         img = Extractor.open(filename)        
+        if args.scale != 1.0:
+            print ('Scaling image: {}'.format(args.scale))
+            img = img.resize([int(i*args.scale) for i in img.size])
 
         if args.bg:
             bg = args.bg
@@ -151,18 +162,16 @@ class ImagePage:
 
         #rotate
         if img.size[0] > img.size[1]:
-            img = img.rotate(90, expand=True)        
-        #
-        # heuristic;
-        #
-        min_size = min(img.size)/args.min_size
-        panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(img).items()    
+            img = img.rotate(90, expand=True)
+
+        min_size = min(img.size)/args.max_panels_per_edge
+        panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(img)
         return self._trim(args, min_size, img, panels, bg), bg
 
     def __init__(self, args, filename, output_dir, client_size):
         self.output_dir = output_dir
         self.client_size = client_size        
-        self.panels = {}
+        self.panels = []
         images_dir = 'images'
         img_filename = sanitize_filepath(filename, platform='auto')
         self.filename = path.join(images_dir, path.splitext(path.basename(img_filename))[0] + '.png')        
@@ -177,11 +186,11 @@ class ImagePage:
         self.size = page.size
         self.create_bg_image_file(images_dir, bg)
 
-    def get_script(self, name):
-        fname = path.join(self.output_dir, name)
-        if path.isfile(fname):
-            return name
-        return None
+    def enumerate_panels(self):
+        return enumerate(self.panels, 1)
+        
+    def get_script(self, args):
+        return 'zoom.js' if args.js else None
 
     def create_bg_image_file(self, dir, bg_color):
         if not bg_color:
@@ -193,15 +202,7 @@ class ImagePage:
             bg = Image.new('RGBA', self.client_size, bg_color)
             bg.save(fpath)
 
-    def gen_empty_html(self, root_name):    
-        fname = path.join(self.output_dir, root_name) + '.html'
-        html = ET.Element('html', {'xmlns': 'http://www.w3.org/1999/xhtml'})
-        with open(fname, 'w') as f:
-            doctype='<!DOCTYPE html SYSTEM "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">'
-            html = ET.tostring(html, method='html', doctype=doctype, encoding='utf-8')
-            f.write(BeautifulSoup(html, features='lxml', from_encoding='utf-8').prettify(formatter='html'))
-
-    def gen_html(self, root_name):
+    def gen_html(self, root_name, args):
         html = ET.Element('html', {'xmlns': 'http://www.w3.org/1999/xhtml'})
         head = ET.Element('head')
         html.append(head)
@@ -216,7 +217,7 @@ class ImagePage:
             'rel': 'stylesheet',
             'type': 'text/css'
         }
-        script = self.get_script('zoom.js')
+        script = self.get_script(args)
         if script:
             head.append(ET.Element('script', {'src': script}))        
             body.attrib['onkeyup'] = 'key_press(event)'
@@ -238,7 +239,7 @@ class ImagePage:
         img_div.append(img)
 
         # pass one: div (regions for panels)
-        for ordinal in self.panels:
+        for ordinal,_ in self.enumerate_panels():
             id = panel_id(root_name, ordinal)
             div = ET.Element('div', {'id': 'reg-' + id})
             top.append(div)
@@ -246,7 +247,7 @@ class ImagePage:
             div.append(ET.Element('a', {'class': 'app-amzn-magnify', 'data-app-amzn-magnify': '{' + data + '}'}))
 
         # pass two: magnification target divs
-        for ordinal in self.panels:
+        for ordinal,_ in self.enumerate_panels():
             id = 'reg-' + panel_id(root_name, ordinal) + '-magTargetParent'
             div = ET.Element('div', {
                 'id': id,
@@ -259,7 +260,7 @@ class ImagePage:
             #lightbox: cover the single page
             div_lb=ET.Element('div', {'class': 'target-map-lb'})
             div.append(div_lb)
-            style = 'min-width: {}px; min-height:{}px;'.format(*client_size)
+            style = 'min-width: {}px; min-height:{}px;'.format(*self.client_size)
             div_lb.append(ET.Element('img', {'src':'images/bg.png', 'style':style}))
 
             div_target = ET.Element('div', {'id': target_id, 'class': 'target-mag'})
@@ -295,7 +296,7 @@ class ImagePage:
             f.write('min-width: {}px;\nmin-height: {}px;\n'.format(w, h))
             f.write('}\n')
 
-            for (ordinal, panel) in self.panels.items():                
+            for (ordinal, panel) in self.enumerate_panels():
                 id = panel_id(root_name, ordinal)
                 scale = panel.max_scale(self.client_size)
 
@@ -465,7 +466,7 @@ def gen_toc_xhtml(pages, output_dir):
         
     toc_list.append(toc_list_item('level1-toc', 'toc.xml', 'Contents'))    
     for id, page, _ in pages:
-        toc_list.append(toc_list_item(id, page, id))
+        toc_list.append(toc_list_item(id, page, id.replace('-', ' ')))
 
     toc = ET.tostring(html, encoding='utf-8', pretty_print=True, xml_declaration=True)
     with open(path.join(output_dir, 'toc.xhtml'), 'w') as f:
@@ -490,7 +491,7 @@ def gen_toc_xml(pages, output_dir):
     div.append(ET.Element('hr'))
     #div.append(toc_list_para('toc sub', 'toc.xml', 'Contents'))
     for (id, page, _) in pages:
-        div.append(toc_list_para('toc', page, id))
+        div.append(toc_list_para('toc', page, id.replace('-', ' ')))
 
     toc = ET.tostring(html, encoding='utf-8', pretty_print=True)
     with open(path.join(output_dir, 'toc.xml'), 'w') as f:
@@ -536,30 +537,44 @@ def gen_navigation_files(pages, output_dir):
     gen_ncx(pages, output_dir)
 
 
-if __name__ == '__main__':    
+def command_line_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('input_dir', help='input dir')
     parser.add_argument('-a', '--author')
     parser.add_argument('-c', '--cover')
+
+    # for splitting wide panels
     parser.add_argument('-s', '--split-ratio', type=float, default=0.5)
+
+    parser.add_argument('--scale', default=1.0, type=float)
+
     parser.add_argument('-t', '--title')
     parser.add_argument('--trim', action='store_true', help='trim margins')
     parser.add_argument('--js', action='store_true', help='embed Javascript')
     parser.add_argument('--threshold', type=int, default=200, help='panel detection threshold')
-    parser.add_argument('--min-size', type=int, default=8)
+
+    # for determining the minimum required size of a panel
+    parser.add_argument('--max-panels-per-edge', type=int, default=8)
+
+    # don't panelize if less than min-panels detected
+    parser.add_argument('--min-panels', default=3)
     parser.add_argument('--bg')
 
+    parser.add_argument('--client-size', nargs=2, default=[500, 850], type=int)
+
     args = parser.parse_args()
+
+    global TRIM_MARGINS
     TRIM_MARGINS = args.trim
 
-    # Kindle 7
-    #client_size=(600, 1024)
-    #client_size=(960, 1280)
-    #client_size=(480, 640)
-    client_size=(500, 900)
-    #
-    # TODO: ParseArgs, client_size etc.
-    #
+    return args
+
+
+def main():
+    args = command_line_args()
+    client_size = args.client_size
+    print ('Client size:', client_size)
+    
     input_dir = path.realpath(args.input_dir)
 
     if not path.isdir(input_dir): 
@@ -585,25 +600,26 @@ if __name__ == '__main__':
         cover = path.join(cover, 'cover.jpg')
         img.save(cover)
     
-    res_files = ['css/amzn-ke-style-template.css']
-    if args.js:
-        res_files.append('zoom.js')
-
-    for f in res_files:
-        shutil.copy(f, path.join(output_dir, f))        
-
     pages = []
     for f in sorted(listdir(input_dir)):
         if path.splitext(f)[1] in [ '.jpg', '.png']:
             f = path.join(input_dir, f)
-            if path.realpath(f)==path.realpath(args.cover):
+            if args.cover and path.realpath(f)==path.realpath(args.cover):
                 continue
             page = ImagePage(args, f, output_dir, client_size)
             i = len(pages)
-            pages.append(page.gen_html('page-{}'.format(i)))
+            pages.append(page.gen_html('page-{}'.format(i), args))
 
+    res_files = ['css/amzn-ke-style-template.css']
     if args.js:
-        page.gen_empty_html('page-{}'.format(i+1))
+        with open('script/zoom.js') as sf:
+            script = sf.read()
+            with open(path.join(output_dir, 'zoom.js'), 'w') as df:
+                df.write('var page_count = {}\n'.format(len(pages)))
+                df.write(script)
+    
+    for f in res_files:
+        shutil.copy(f, path.join(output_dir, f))            
 
     gen_content_opf(args, pages, output_dir)
     gen_navigation_files(pages, output_dir)
@@ -615,3 +631,8 @@ if __name__ == '__main__':
                 arcname = '/'.join(str(fpath).split('/')[1:])
                 zipf.write(fpath, arcname)
     
+
+if __name__ == '__main__':    
+    with pushd(path.dirname(__file__)):
+        main()
+
