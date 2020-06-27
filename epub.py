@@ -617,7 +617,7 @@ def main():
         f.write('application/epub+zip')
     
     # prepare content and CSS output locations
-    output_dir = path.join(output_dir, 'OEPBS')
+    output_dir = path.join(output_dir, 'OEBPS')
     css_dir = path.join(output_dir, 'css')
     makedirs(css_dir)
 
