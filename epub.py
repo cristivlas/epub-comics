@@ -94,7 +94,20 @@ class Panel:
 def panel_id(page, ordinal):
     return '{}-{}'.format(page, ordinal)
 
-class ImagePage:
+def add_comic_book_meta(args, metadata):
+    metadata.append(ET.Element('meta', {'name': 'orientation-lock', 'content': 'portrait'}))
+    metadata.append(ET.Element('meta', {'name': 'fixed-layout', 'content': 'true'}))
+    metadata.append(ET.Element('meta', {'name': 'book-type', 'content': 'comic'}))
+    metadata.append(ET.Element('meta', {'name': 'zero-gutter', 'content': 'true'}))
+    metadata.append(ET.Element('meta', {'name': 'zero-margin', 'content': 'true'}))
+    metadata.append(ET.Element('meta', {'name': 'region-mag', 'content': 'true'}))
+    metadata.append(ET.Element('meta', {'name': 'ke-border-color', 'content': '#000000'}))
+    metadata.append(ET.Element('meta', {'name': 'ke-border-width', 'content': '3'}))
+    metadata.append(ET.Element('meta', {'name': 'original-resolution', 'content':'{}x{}'.format(*args.client_size)}))
+    metadata.append(ET.Element('meta', {'name': 'primary-writing-mode', 'content': 'horizontal-lr' }))
+
+
+class Page:
     def _set_panels(self, args, img:Image, panels:dict):
         r = args.split_ratio
         for panel_name in sorted(panels.keys()):
@@ -207,7 +220,7 @@ class ImagePage:
         head = ET.Element('head')
         html.append(head)
         head.append(ET.Element('meta', {'http-equiv': 'content-type', 'content': 'text/html; charset=utf-8'}))
-                
+
         body = ET.Element('body')
         html.append(body)
 
@@ -330,10 +343,14 @@ class ImagePage:
 
 def gen_content_opf(args, pages, output_dir):
     package = ET.Element('package',
-        {'unique-identifier': 'PrimaryID',
-        'version': '3.0',
-        '{http://www.w3.org/XML/1998/namespace}lang': 'en',
-        'xmlns': 'http://www.idpf.org/2007/opf' },
+        {
+            'unique-identifier': 'PrimaryID',
+            'version': '3.0',
+            #'unique-identifier': '{' + str(uuid.uuid4()) + '}',
+            #'version': '2.0',
+            '{http://www.w3.org/XML/1998/namespace}lang': 'en',
+            'xmlns': 'http://www.idpf.org/2007/opf'
+        },
         nsmap={ 'xml': 'http://www.w3.org/XML/1998/namespace' })
 
     metadata = ET.Element('metadata', nsmap={
@@ -344,14 +361,15 @@ def gen_content_opf(args, pages, output_dir):
     package.append(metadata)
     package.append(manifest)
     
-    # fixed layout
-    metadata.append(ET.Element('meta', {'name': 'orientation-lock', 'content': 'portrait'}))        
-    metadata.append(ET.Element('meta', {'name': 'fixed-layout', 'content': 'true'}))        
-    metadata.append(ET.Element('meta', {'name': 'book-type', 'content': 'comic'}))        
+    add_comic_book_meta(args, metadata)
 
-    # metadata id
+    # unique id
     e = ET.Element('{http://purl.org/dc/elements/1.1/}identifier', {'id': 'PrimaryID' })
     e.text = str(uuid.uuid4())
+    metadata.append(e)
+
+    e = ET.Element('{http://purl.org/dc/elements/1.1/}publisher')
+    e.text = 'Fake News Media'
     metadata.append(e)
 
     # metadata language
@@ -505,18 +523,27 @@ def gen_toc(pages, output_dir):
 
 def gen_ncx(pages, output_dir):
     ncx = ET.Element('ncx',
-        {'version': '2005.1',
+        {'version': '2005-1',
         '{http://www.w3.org/XML/1998/namespace}lang': 'en',
         'xmlns': 'http://www.daisy.org/z3986/2005/ncx' },
         nsmap={ 'xml': 'http://www.w3.org/XML/1998/namespace' })
 
+    head = ET.Element('head')
+    ncx.append(head)
+
+    head.append(ET.Element('meta', {'content': 'true', 'name': 'generated'}))
     start_play_order = 1    
+
+    map = ET.Element('navMap')
+    ncx.append(map)
+
     point = ET.Element('navPoint', {
             'class': 'toc',
             'id': 'level1-toc',
             'playOrder': '1'
         })
     point.append(ET.Element('content', {'src':'toc.xml'}))    
+    map.append(point)
 
     for i, (id, page, _) in enumerate(pages):
         point = ET.Element('navPoint', {
@@ -524,10 +551,11 @@ def gen_ncx(pages, output_dir):
             'id': id,
             'playOrder': str(i+1+start_play_order)
         })
-        ncx.append(point)
+        map.append(point)
         point.append(ET.Element('content', {'src': page}))
 
-    navigation = ET.tostring(ncx, encoding='utf-8', pretty_print=True, xml_declaration=True)
+    doctype = "<!DOCTYPE ncx PUBLIC '-//NISO//DTD ncx 2005-1//EN' 'http://www.daisy.org/z3986/2005/ncx-2005-1.dtd'>"
+    navigation = ET.tostring(ncx, encoding='utf-8', pretty_print=True, xml_declaration=True, doctype=doctype)
     with open(path.join(output_dir, 'toc.ncx'), 'w') as f:
         f.write(navigation.decode('utf-8'))
 
@@ -589,7 +617,7 @@ def main():
         f.write('application/epub+zip')
     
     # prepare content and CSS output locations
-    output_dir = path.join(output_dir, 'OPS')
+    output_dir = path.join(output_dir, 'OEPBS')
     css_dir = path.join(output_dir, 'css')
     makedirs(css_dir)
 
@@ -606,7 +634,7 @@ def main():
             f = path.join(input_dir, f)
             if args.cover and path.realpath(f)==path.realpath(args.cover):
                 continue
-            page = ImagePage(args, f, output_dir, client_size)
+            page = Page(args, f, output_dir, client_size)
             i = len(pages)
             pages.append(page.gen_html('page-{}'.format(i), args))
 

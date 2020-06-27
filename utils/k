@@ -2,14 +2,20 @@
 
 # 1. run kindlegen over .epub input
 #
-# 2. run Calibre's converter utility to convert .mobi to new kf8 format
+# 2. run Calibre's converter utility to convert .mobi to .azw3
 #
 in=$1
-out=${in/.epub/.mobi}
+out=${in/.epub/.azw3}
 dir=$(dirname $0)
 shift 1
 temp_file=$(mktemp tmp-XXXXX.mobi)
 echo $temp_file
-$dir/kindle/kindlegen $in -o $temp_file $@
-ebook-convert $temp_file $out --mobi-file-type new
+$dir/kindle/kindlegen $in -o $temp_file -dont_append_source $@
+
+if test -s $temp_file; then
+    echo
+    echo '--- converting to new Kindle format ---'
+    echo
+    ebook-convert $temp_file $out
+fi
 rm -f $temp_file
