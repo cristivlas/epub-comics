@@ -17,16 +17,19 @@ amzn_exth_codes = {
     u'fixed-layout': 122,
     u'book-type': 123,
     u'orientation-lock': 124,
+    u'KF8_Count_of_Resources_Fonts_Images': 125,
     u'original-resolution': 126,
     u'zero-gutter': 127,
     u'zero-margin': 128,
-    u'RegionMagnification': 132,
-    u'KF8_Count_of_Resources_Fonts_Images': 125,
     u'KF8_Masthead/Cover_Image': 129,
+    u'RegionMagnification': 132,
+    u'CoverOffset': 201,
+    u'ThumbOffset': 202,
+    u'Fake Cover': 203,
     u'Language': 524,
     u'primary-writing-mode': 525,
-    u'(542)':542,
-    u'(547)': 547,
+    u'542':542,
+    u'547': 547,
 }
 
 comic_book_exth_values = {
@@ -37,8 +40,7 @@ comic_book_exth_values = {
     'zero-gutter': 'true',
     'zero-margin': 'true',
     'KF8_Count_of_Resources_Fonts_Images': 0,
-    #'(542)':'C1te',
-    #'(547)': 'InMemory'
+    '547': 'InMemory'
 }
 
 def patch_exth_codes():
@@ -58,11 +60,12 @@ def fixup_metadata(oeb):
     for k in oeb.metadata:
         v = oeb.metadata[k]
         if k in ['contributor']:
-            print ('stripping {}: {}'.format(k, v))
+            print ('Stripping {}: {}'.format(k, v))
             continue
         for i in v:
             if k=='language' and i.value=='eng':
                 metadata.add(k, 'en')
+                metadata.add('Fake Cover', 0)
             else:
                 metadata[k].append(i)
 
@@ -84,12 +87,12 @@ def set_cover_image(oeb):
         print (oeb.metadata['cover'])
     else:
         cover = None
-        for _, item in oeb.manifest.hrefs.items():
-            #print (item.id)
-            #if item.id in [ 'cover-image', 'img-0' ]:
-            if item.id in [ 'cover-image', 'x_cover-image' ]:
+        for h, item in oeb.manifest.hrefs.items():
+            if item.id in [ 'cover-image', 'x_cover-image', 'img-0' ]:
                 if not cover or item.id == 'cover-image':
                     cover = item.id
+                    print ('Detected cover: {} href={}'.format(item.id, h))
+
         if cover:
             oeb.metadata.add('cover', cover)
 
@@ -125,7 +128,7 @@ def opf_to_book(opf, outpath, container):
     #... and write it out
     book.opts.prefer_author_sort = False
     book.opts.share_not_sync = False
-
+    print ('\nWriting out: {}\n'.format(outpath))
     book.write(outpath)
 
 

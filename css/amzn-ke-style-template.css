@@ -109,8 +109,10 @@ div.target-mag-parent {
 div.target-mag-lb {
     width:100%;
     height:100%;
-    background: #333333;
-    opacity:.8;
+}
+
+img.mask {
+  opacity: 0.9
 }
 
 div.target-mag img {
@@ -121,6 +123,7 @@ div.fs div.target-mag-text {
     position: absolute;
     height: 100%;
     width: 100%;
+    overflow: hidden;
 }
 
 div.target-mag-text div {

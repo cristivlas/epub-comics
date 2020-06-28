@@ -18,7 +18,10 @@ from lxml import etree as ET
 from PIL import Image
 from pathvalidate import sanitize_filepath
 
+MAX_SCALE_FACTOR = 0.95
+SCRIPT = 'navigate.js'
 TRIM_MARGINS = True
+
 
 @contextlib.contextmanager
 def pushd(new_dir):
@@ -62,14 +65,15 @@ class Panel:
         return '{} left={}%, top={}%, width={}%, height={}%'.format(self.xywh, self.left, self.top, self.width, self.height)
     
     def max_scale(self, client_size):
-        scale = min([i / j for i, j in zip(client_size, self.xywh[2:])])
+        scale = min([MAX_SCALE_FACTOR * i / j for i, j in zip(client_size, self.xywh[2:])])
         return scale
 
     # box (magTarget)
     def zoom_target_box(self, scale, client_size):
         _,_,w,h = self.xywh
+        # centered:
         return {
-            'left':'{}%'.format(round(50*(client_size[0]-w*scale)/client_size[0],2)),
+            'left':'{}%'.format(round(MAX_SCALE_FACTOR*50*(client_size[0]-w*scale)/client_size[0],2)),
             'top': '{}%'.format(round(50*(client_size[1]-h*scale)/client_size[1],2)),
             'width':  scale_perc(w, scale, client_size[0]),
             'height': scale_perc(h, scale, client_size[1]),
@@ -82,12 +86,12 @@ class Panel:
         style = {
             'top': '{}%'.format(round(-y*100/h, 2)),
             'left': '{}%'.format(round(-x*100/w, 2)),
-
             'width':'{}px'.format(int(new_size[0])),
             'height':'{}px'.format(int(new_size[1])),
 
-            'min-width':'{}px'.format(int(new_size[0])),
-            'min-height':'{}px'.format(int(new_size[1])),
+            # work-around kindlegen
+            #'min-width':'{}px'.format(int(new_size[0])),
+            #'min-height':'{}px'.format(int(new_size[1])),
         }
         return style
 
@@ -218,9 +222,6 @@ class Page:
 
     def enumerate_panels(self):
         return enumerate(self.panels, 1)
-        
-    def get_script(self, args):
-        return 'zoom.js' if args.js else None
 
     def create_bg_image_file(self, dir, bg_color):
         if not bg_color:
@@ -247,10 +248,11 @@ class Page:
             'rel': 'stylesheet',
             'type': 'text/css'
         }
-        script = self.get_script(args)
-        if script:
-            head.append(ET.Element('script', {'src': script}))        
+
+        if args.js:
+            head.append(ET.Element('script', {'src': SCRIPT}))
             body.attrib['onkeyup'] = 'key_press(event)'
+            body.attrib['onload'] = 'navigate_panel(0)'
 
         # CSS
         head.append(ET.Element('link', css_link))
@@ -259,7 +261,7 @@ class Page:
         head.append(ET.Element('link', css_link))
 
         top = ET.Element('div', {'class':'fs'})
-        if script:
+        if args.js:
             top.attrib['ondblclick'] = 'zoom(event)'
 
         body.append(top)
@@ -288,10 +290,9 @@ class Page:
             target_id = 'reg-' + panel_id(root_name, ordinal) + '-magTarget'
             
             #lightbox: cover the single page
-            div_lb=ET.Element('div', {'class': 'target-map-lb'})
+            div_lb=ET.Element('div', {'class': 'target-map-lb' })
             div.append(div_lb)
-            style = 'opacity: 0.9; min-width: {}px; min-height:{}px;'.format(*self.client_size)
-            div_lb.append(ET.Element('img', {'src':'images/bg.png', 'style':style}))
+            div_lb.append(ET.Element('img', {'src':'images/bg.png', 'class':'mask'}))
 
             div_target = ET.Element('div', {'id': target_id, 'class': 'target-mag'})
             div.append(div_target)
@@ -363,8 +364,6 @@ def gen_content_opf(args, pages, output_dir):
         {
             'unique-identifier': 'PrimaryID',
             'version': '3.0',
-            #'unique-identifier': '{' + str(uuid.uuid4()) + '}',
-            #'version': '2.0',
             '{http://www.w3.org/XML/1998/namespace}lang': 'en',
             'xmlns': 'http://www.idpf.org/2007/opf'
         },
@@ -433,10 +432,8 @@ def gen_content_opf(args, pages, output_dir):
     
     manifest.append(ET.Element('item', { 'href': 'css/amzn-ke-style-template.css', 'id':'css-template', 'media-type': 'text/css' }))
     manifest.append(ET.Element('item', { 'href': 'toc.ncx', 'id':'ncx', 'media-type': 'application/x-dtbncx+xml' }))
-    
     # <item href="toc.xml" id="toc" media-type="application/xhtml+xml"/>
     manifest.append(ET.Element('item', { 'href': 'toc.xml', 'id':'toc', 'media-type': 'application/xhtml+xml' }))
-    
     # <item href="toc.xhtml" id="tocn" media-type="application/xhtml+xml" properties="nav"/>
     manifest.append(ET.Element('item', { 'href': 'toc.xhtml', 'id':'tocn', 'media-type': 'application/xhtml+xml', 'properties': 'nav' }))
 
@@ -444,7 +441,6 @@ def gen_content_opf(args, pages, output_dir):
     content = ET.tostring(package, encoding='utf-8', pretty_print=True)
     with open(path.join(output_dir, 'content.opf'), 'w') as f:
         f.write(content.decode('utf-8'))
-
 
 #
 # EPUB Toc, content, etc.
@@ -528,7 +524,8 @@ def gen_toc_xml(pages, output_dir):
     h1.text = 'Contents'
     div.append(h1)
     div.append(ET.Element('hr'))
-    #div.append(toc_list_para('toc sub', 'toc.xml', 'Contents'))
+    div.append(toc_list_para('toc sub', 'toc.xml', 'Contents'))
+
     for (id, page, _) in pages:
         div.append(toc_list_para('toc', page, id.replace('-', ' ')))
 
@@ -592,26 +589,24 @@ def command_line_args():
     parser.add_argument('-a', '--author')
     parser.add_argument('-c', '--cover')
     parser.add_argument('-t', '--title')
-
-    # for splitting wide panels
+    parser.add_argument('--bg', help='background color (default is automatic)')
+    parser.add_argument('--js', action='store_true', help='embed Javascript for debugging')
+    # for splitting wide panels (default is no split)
     parser.add_argument('-s', '--split-ratio', type=float, default=0)
     parser.add_argument('--scale', default=1.0, type=float)
-
+    # trim and repanel
     parser.add_argument('--trim', action='store_true', help='trim margins')
-    parser.add_argument('--js', action='store_true', help='embed Javascript')
     parser.add_argument('--threshold', type=int, default=200, help='panel detection threshold')
-
     # for determining the minimum required size of a panel
     parser.add_argument('--max-panels-per-edge', type=int, default=8)
-
     # don't panelize if less than min-panels detected
     parser.add_argument('--min-panels', default=3)
-    parser.add_argument('--bg')
-
-    parser.add_argument('--client-size', nargs=2, default=[960, 1280], type=int, metavar='INT')
+    parser.add_argument('-cs','--client-size', nargs=2, default=[960, 1280], type=int, metavar='INT')
     parser.add_argument('--jpg-quality', default=70, type=int, choices=range(1, 96), metavar='[1-95]')
     #TODO:
     #parser.add_argument('--skip-double-pages', action='store_true')
+    #parser.add_argument('--no-toc', action='store_true')
+    #parser.add_argument('--cleanup', action='store_true', help='remove -epub work dir on exit')
 
     args = parser.parse_args()
 
@@ -661,14 +656,16 @@ def main():
             i = len(pages)
             pages.append(page.gen_html('page-{}'.format(i), args))
 
-    res_files = ['css/amzn-ke-style-template.css']
+    # generate debug script for navigating panels
     if args.js:
         with open('script/zoom.js') as sf:
             script = sf.read()
-            with open(path.join(output_dir, 'zoom.js'), 'w') as df:
+            with open(path.join(output_dir, SCRIPT), 'w') as df:
                 df.write('var page_count = {}\n'.format(len(pages)))
                 df.write(script)
-    
+
+    # 'resource' files
+    res_files = ['css/amzn-ke-style-template.css']
     for f in res_files:
         shutil.copy(f, path.join(output_dir, f))            
 

@@ -1,12 +1,11 @@
-var ordinal = 0
-
 function unzoom_all() {
-    ordinal = 0
+    sessionStorage.setItem('ordinal', 0)
     var all = document.getElementsByClassName('target-mag-parent')
     for (var i = 0; i != all.length; ++i) {
         var e = all[i]
         if (e.style.display == 'block') {
             e.style.display = 'none'
+            e.style.visibility = 'hidden'
             return true
         }
     }
@@ -27,9 +26,9 @@ function zoom_panel(elem) {
             if (elem.style.display == 'block') {
                 return
             }            
-            ordinal = target.ordinal
-            console.log('zoom_panel: ordinal=' + ordinal)
+            sessionStorage.setItem('ordinal', target.ordinal)
             elem.style.display='block'            
+            elem.style.visibility = 'visible'
             elem.scrollIntoView()
             elem.focus()
         }
@@ -43,21 +42,39 @@ function zoom(e) {
 function navigate_page(direction) {
     var url = window.location.href.split('.')[0].split('-')
     var index = parseInt(url[url.length-1]) + direction
-    console.log(index)
-    if (index >= 0 && index < page_count) {        
-        ordinal = 0
-        url[url.length-1] = index        
-        url = url.join('-') + '.html'
-        window.location.href = url
+    if (index < 0 || index >= page_count) {
+        // unzoom_all()
+    }
+    else {
+        var ordinal = parseInt(sessionStorage.getItem('ordinal'))
+        // zoomed?
+        if (ordinal) {
+            // save panel ordinal for current page
+            sessionStorage.setItem(window.location.href, ordinal)
+        }
+        if (direction) {
+            url[url.length-1] = index
+            url = url.join('-') + '.html'
+
+            if (ordinal) {
+                var ordinal = sessionStorage.getItem(url)
+                if (!ordinal) {
+                    // no saved ordinal, start with first on page
+                    ordinal = 1
+                }
+                sessionStorage.setItem('ordinal', ordinal)
+            }
+            window.location.href = url
+        }
     }
 }
 
 function navigate_panel(direction) {
-    console.log('navigate_panel: ordinal=' + ordinal)
+    var ordinal = parseInt(sessionStorage.getItem('ordinal'))
     if (ordinal) {
         var page = window.location.href.split('/')
         page = page[page.length-1].split('.')[0]
-        id = 'reg-' + page + '-' + (ordinal + direction)
+        var id = 'reg-' + page + '-' + (ordinal + direction)
         elem = document.getElementById(id)
         if (elem) {
             zoom_panel(elem.firstElementChild)
