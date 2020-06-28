@@ -129,7 +129,7 @@ class Page:
         # heuristic
         few_panels = len(panels) <= 3
         if not TRIM_MARGINS or few_panels:
-            page = Image.new('RGBA', img.size, bg) 
+            page = Image.new('RGB', img.size, bg) 
             if few_panels:
                 page.paste(img, (0,0))
             for _,(panel_img,xy) in panels.items():
@@ -151,7 +151,7 @@ class Page:
             bottom_right = points[-1]
             size = [i-j+2*margin for i, j in zip(bottom_right, top_left)]
             
-            page = Image.new('RGBA', size, bg)
+            page = Image.new('RGB', size, bg)
             for _,(img,xy) in panels:
                 page.paste(img, [i-j+margin for i, j in zip(xy, top_left)])
 
@@ -187,14 +187,13 @@ class Page:
         self.panels = []
         images_dir = 'images'
         img_filename = sanitize_filepath(filename, platform='auto')
-        self.filename = path.join(images_dir, path.splitext(path.basename(img_filename))[0] + '.png')        
-
+        self.filename = path.join(images_dir, path.splitext(path.basename(img_filename))[0] + '.jpg')        
         print (self.filename)
         images_dir = path.join(output_dir, images_dir)
         makedirs(images_dir, exist_ok=True)
 
         page, bg = self._make_page(args, filename)
-        page.save(path.join(output_dir, self.filename), dpi=(300, 300))    
+        page.save(path.join(output_dir, self.filename))
 
         self.size = page.size
         self.create_bg_image_file(images_dir, bg)
@@ -212,7 +211,7 @@ class Page:
 
         fpath = path.join(dir, 'bg.png')
         if not path.exists(fpath):
-            bg = Image.new('RGBA', self.client_size, bg_color)
+            bg = Image.new('RGB', self.client_size, bg_color)
             bg.save(fpath)
 
     def gen_html(self, root_name, args):
@@ -273,7 +272,7 @@ class Page:
             #lightbox: cover the single page
             div_lb=ET.Element('div', {'class': 'target-map-lb'})
             div.append(div_lb)
-            style = 'min-width: {}px; min-height:{}px;'.format(*self.client_size)
+            style = 'opacity: .85; min-width: {}px; min-height:{}px;'.format(*self.client_size)
             div_lb.append(ET.Element('img', {'src':'images/bg.png', 'style':style}))
 
             div_target = ET.Element('div', {'id': target_id, 'class': 'target-mag'})
@@ -379,9 +378,10 @@ def gen_content_opf(args, pages, output_dir):
 
     # metadata author
     if args.author:
-        e = ET.Element('{http://purl.org/dc/elements/1.1/}creator')
-        e.text = args.author
-        metadata.append(e)
+        for author in args.author.split(','):
+            e = ET.Element('{http://purl.org/dc/elements/1.1/}creator')
+            e.text = author.strip()
+            metadata.append(e)
 
     # metadata title
     if args.title:
@@ -399,10 +399,11 @@ def gen_content_opf(args, pages, output_dir):
 
     for _,_,files in walk(path.join(output_dir, 'images')):
         for i,f in enumerate(files):
-            if f.endswith('.png'):
+            if f.endswith('.jpg'):
+                mime = 'image/jpeg'
+            elif f.endswith('.png'):
                 mime = 'image/png'
-            else:
-                continue
+
             manifest.append(ET.Element('item', {'href': 'images/' + f, 'id': 'img-{}'.format(i), 'media-type': mime }))
 
     for (id, page, css) in pages:
@@ -572,7 +573,7 @@ def command_line_args():
     parser.add_argument('-c', '--cover')
 
     # for splitting wide panels
-    parser.add_argument('-s', '--split-ratio', type=float, default=0.5)
+    parser.add_argument('-s', '--split-ratio', type=float, default=0)
 
     parser.add_argument('--scale', default=1.0, type=float)
 
@@ -588,7 +589,8 @@ def command_line_args():
     parser.add_argument('--min-panels', default=3)
     parser.add_argument('--bg')
 
-    parser.add_argument('--client-size', nargs=2, default=[500, 850], type=int)
+    #parser.add_argument('--client-size', nargs=2, default=[500, 850], type=int)
+    parser.add_argument('--client-size', nargs=2, default=[960, 1280], type=int)
 
     args = parser.parse_args()
 
