@@ -175,6 +175,8 @@ class Page:
             print ('Scaling image: {}'.format(args.scale))
             img = img.resize([int(i*args.scale) for i in img.size])
 
+        min_size = min(img.size)/args.max_panels_per_edge
+
         # wide (double?) page
         if img.size[0] > img.size[1]:
             aspect = img.size[1]/img.size[0]
@@ -187,11 +189,13 @@ class Page:
             page.paste(img, [(i-j)//2 for i, j in zip(page.size, img.size)])
             img = page
             # force minimum JPEG quality
-            if self.quality < 70:
-                self.quality = 70
+            if self.quality < 80:
+                self.quality = 80
+            # don't panelize double pages
+            panels = {}
+        else:
+            panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(img)
 
-        min_size = min(img.size)/args.max_panels_per_edge
-        panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(img)
         return self._trim(args, min_size, img, panels, bg), bg
 
     def __init__(self, args, filename, output_dir, client_size):
@@ -587,13 +591,12 @@ def command_line_args():
     parser.add_argument('input_dir', help='input dir')
     parser.add_argument('-a', '--author')
     parser.add_argument('-c', '--cover')
+    parser.add_argument('-t', '--title')
 
     # for splitting wide panels
     parser.add_argument('-s', '--split-ratio', type=float, default=0)
-
     parser.add_argument('--scale', default=1.0, type=float)
 
-    parser.add_argument('-t', '--title')
     parser.add_argument('--trim', action='store_true', help='trim margins')
     parser.add_argument('--js', action='store_true', help='embed Javascript')
     parser.add_argument('--threshold', type=int, default=200, help='panel detection threshold')
@@ -606,7 +609,9 @@ def command_line_args():
     parser.add_argument('--bg')
 
     parser.add_argument('--client-size', nargs=2, default=[960, 1280], type=int, metavar='INT')
-    parser.add_argument('--jpg-quality', default=50, type=int, choices=range(1, 96), metavar='[1-95]')
+    parser.add_argument('--jpg-quality', default=70, type=int, choices=range(1, 96), metavar='[1-95]')
+    #TODO:
+    #parser.add_argument('--skip-double-pages', action='store_true')
 
     args = parser.parse_args()
 

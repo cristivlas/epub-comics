@@ -71,7 +71,6 @@ def fixup_metadata(oeb):
 
     oeb.metadata = metadata
 
-
 def create_kf8_book(oeb, opts, resources, for_joint=False):
     fixup_metadata(oeb)
     writer = KF8Writer(oeb, opts, resources)
@@ -81,11 +80,14 @@ def create_kf8_book(oeb, opts, resources, for_joint=False):
 
 
 def set_cover_image(oeb):
-    if not oeb.metadata['cover']:            
+    if oeb.metadata['cover']:
+        print (oeb.metadata['cover'])
+    else:
         cover = None
         for _, item in oeb.manifest.hrefs.items():
+            #print (item.id)
             #if item.id in [ 'cover-image', 'img-0' ]:
-            if item.id in [ 'cover-image' ]:
+            if item.id in [ 'cover-image', 'x_cover-image' ]:
                 if not cover or item.id == 'cover-image':
                     cover = item.id
         if cover:
@@ -95,14 +97,11 @@ def set_cover_image(oeb):
 
 def opf_to_book(opf, outpath, container):
     from calibre.ebooks.conversion.plumber import Plumber, create_oebbook
-
     class Item(Manifest.Item):
-
         def _parse_css(self, data):
             # The default CSS parser used by oeb.base inserts the h namespace
             # and resolves all @import rules. We dont want that.
             return container.parse_css(data)
-
     def specialize(oeb):
         oeb.manifest.Item = Item
 
@@ -116,7 +115,7 @@ def opf_to_book(opf, outpath, container):
     plumber.opts.dont_compress = True
     plumber.opts.toc_title = None
     plumber.opts.mobi_toc_at_start = False
-    plumber.opts.no_inline_toc = True
+    plumber.opts.no_inline_toc = False
     plumber.opts.mobi_periodical = False
     
     res = Resources(oeb, plumber.opts, False, process_images=False)
@@ -145,8 +144,11 @@ def main(argv=sys.argv):
     input_path = sys.argv[1]
     if input_path.endswith('.mobi'):
         extract_mobi(input_path, path.splitext(input_path)[0] + '_extracted_mobi')
-    else:        
-        output_path = path.splitext(input_path)[0] + '.azw3'
+    else:
+        if len(sys.argv) > 2:
+            output_path = sys.argv[2]
+        else:
+            output_path = path.splitext(input_path)[0] + '.azw3'
         patch_exth_codes()
         epub_to_book(input_path, output_path)
 
