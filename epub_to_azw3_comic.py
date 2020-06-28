@@ -1,3 +1,4 @@
+#! /usr/bin/calibre-debug
 #
 # calibre-debug
 #
@@ -22,27 +23,29 @@ amzn_exth_codes = {
     u'RegionMagnification': 132,
     u'KF8_Count_of_Resources_Fonts_Images': 125,
     u'KF8_Masthead/Cover_Image': 129,
-    #u'Language': 524,
+    u'Language': 524,
     u'primary-writing-mode': 525,
+    u'(542)':542,
+    u'(547)': 547,
 }
 
 comic_book_exth_values = {
     'fixed-layout': 'true',
     'book-type': 'comic',
-    #'orientation-lock': 'portrait',
+    'orientation-lock': 'portrait',
     'original-resolution': '960x1280',
     'zero-gutter': 'true',
     'zero-margin': 'true',
-    'RegionMagnification': 'true',
     'KF8_Count_of_Resources_Fonts_Images': 0,
-    'KF8_Masthead/Cover_Image': 'kindle:embed:0003',
-    #'Language': 'en',
-    'primary-writing-mode': 'horizontal-lr',
+    #'(542)':'C1te',
+    #'(547)': 'InMemory'
 }
 
-for c in amzn_exth_codes:
-    EXTH_CODES[c] = amzn_exth_codes[c]
-
+def patch_exth_codes():
+    for c in amzn_exth_codes:
+        if EXTH_CODES.has_key(c):
+            print ('EXTH code already defined: ', c)
+        EXTH_CODES[c] = amzn_exth_codes[c]
 
 def dump_metadata(metadata):
     for k in metadata:
@@ -50,7 +53,7 @@ def dump_metadata(metadata):
             print ('{}: {}'.format(k, item))
 
 
-def create_kf8_book(oeb, opts, resources, for_joint=False):
+def fixup_metadata(oeb):
     metadata = Metadata(oeb)
     for k in oeb.metadata:
         v = oeb.metadata[k]
@@ -68,11 +71,27 @@ def create_kf8_book(oeb, opts, resources, for_joint=False):
 
     oeb.metadata = metadata
 
+
+def create_kf8_book(oeb, opts, resources, for_joint=False):
+    fixup_metadata(oeb)
     writer = KF8Writer(oeb, opts, resources)
     book = KF8Book(writer, for_joint=for_joint)
     dump_metadata(book.metadata)
     return book
 
+
+def set_cover_image(oeb):
+    if not oeb.metadata['cover']:            
+        cover = None
+        for _, item in oeb.manifest.hrefs.items():
+            #if item.id in [ 'cover-image', 'img-0' ]:
+            if item.id in [ 'cover-image' ]:
+                if not cover or item.id == 'cover-image':
+                    cover = item.id
+        if cover:
+            oeb.metadata.add('cover', cover)
+
+                
 
 def opf_to_book(opf, outpath, container):
     from calibre.ebooks.conversion.plumber import Plumber, create_oebbook
@@ -91,6 +110,7 @@ def opf_to_book(opf, outpath, container):
     plumber.setup_options()
 
     oeb = create_oebbook(container.log, opf, plumber.opts, specialize=specialize)
+    set_cover_image(oeb)
 
     # Generate KF8 Book
     plumber.opts.dont_compress = True
@@ -125,8 +145,9 @@ def main(argv=sys.argv):
     input_path = sys.argv[1]
     if input_path.endswith('.mobi'):
         extract_mobi(input_path, path.splitext(input_path)[0] + '_extracted_mobi')
-    else:
+    else:        
         output_path = path.splitext(input_path)[0] + '.azw3'
+        patch_exth_codes()
         epub_to_book(input_path, output_path)
 
 if __name__ == '__main__':

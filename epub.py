@@ -1,4 +1,5 @@
-#
+#! /usr/bin/python3
+# 
 # Generate .epub from folder of comics, one image file per page
 #
 import argparse
@@ -100,9 +101,9 @@ def add_comic_book_meta(args, metadata):
     metadata.append(ET.Element('meta', {'name': 'book-type', 'content': 'comic'}))
     metadata.append(ET.Element('meta', {'name': 'zero-gutter', 'content': 'true'}))
     metadata.append(ET.Element('meta', {'name': 'zero-margin', 'content': 'true'}))
-    metadata.append(ET.Element('meta', {'name': 'region-mag', 'content': 'true'}))
-    metadata.append(ET.Element('meta', {'name': 'ke-border-color', 'content': '#000000'}))
-    metadata.append(ET.Element('meta', {'name': 'ke-border-width', 'content': '3'}))
+    #metadata.append(ET.Element('meta', {'name': 'region-mag', 'content': 'true'}))
+    #metadata.append(ET.Element('meta', {'name': 'ke-border-color', 'content': '#000000'}))
+    #metadata.append(ET.Element('meta', {'name': 'ke-border-width', 'content': '3'}))
     metadata.append(ET.Element('meta', {'name': 'original-resolution', 'content':'{}x{}'.format(*args.client_size)}))
     metadata.append(ET.Element('meta', {'name': 'primary-writing-mode', 'content': 'horizontal-lr' }))
 
@@ -161,10 +162,7 @@ class Page:
         return page
 
     def _make_page(self, args, filename):        
-        img = Extractor.open(filename)        
-        if args.scale != 1.0:
-            print ('Scaling image: {}'.format(args.scale))
-            img = img.resize([int(i*args.scale) for i in img.size])
+        img = Extractor.open(filename)
 
         if args.bg:
             bg = args.bg
@@ -173,9 +171,24 @@ class Page:
         else:
             bg = detect_background_color(img)            
 
-        #rotate
+        if args.scale != 1.0:
+            print ('Scaling image: {}'.format(args.scale))
+            img = img.resize([int(i*args.scale) for i in img.size])
+
+        # wide (double?) page
         if img.size[0] > img.size[1]:
-            img = img.rotate(90, expand=True)
+            aspect = img.size[1]/img.size[0]
+            client_aspect = self.client_size[1]/self.client_size[0]
+            # keep the client aspect, and also fit the image
+            size = [img.size[0], int(img.size[1]*client_aspect/aspect)]
+            # a temporary image to hold the page
+            page = Image.new('RGB', size, bg)
+            img = img.resize([page.size[0], int(page.size[1]*aspect)], Image.LANCZOS)
+            page.paste(img, [(i-j)//2 for i, j in zip(page.size, img.size)])
+            img = page
+            # force minimum JPEG quality
+            if self.quality < 70:
+                self.quality = 70
 
         min_size = min(img.size)/args.max_panels_per_edge
         panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(img)
@@ -185,6 +198,7 @@ class Page:
         self.output_dir = output_dir
         self.client_size = client_size        
         self.panels = []
+        self.quality = args.jpg_quality
         images_dir = 'images'
         img_filename = sanitize_filepath(filename, platform='auto')
         self.filename = path.join(images_dir, path.splitext(path.basename(img_filename))[0] + '.jpg')        
@@ -192,8 +206,8 @@ class Page:
         images_dir = path.join(output_dir, images_dir)
         makedirs(images_dir, exist_ok=True)
 
-        page, bg = self._make_page(args, filename)
-        page.save(path.join(output_dir, self.filename))
+        (page, bg) = self._make_page(args, filename)
+        page.save(path.join(output_dir, self.filename), quality=self.quality)
 
         self.size = page.size
         self.create_bg_image_file(images_dir, bg)
@@ -272,7 +286,7 @@ class Page:
             #lightbox: cover the single page
             div_lb=ET.Element('div', {'class': 'target-map-lb'})
             div.append(div_lb)
-            style = 'opacity: .85; min-width: {}px; min-height:{}px;'.format(*self.client_size)
+            style = 'opacity: 0.9; min-width: {}px; min-height:{}px;'.format(*self.client_size)
             div_lb.append(ET.Element('img', {'src':'images/bg.png', 'style':style}))
 
             div_target = ET.Element('div', {'id': target_id, 'class': 'target-mag'})
@@ -399,6 +413,8 @@ def gen_content_opf(args, pages, output_dir):
 
     for _,_,files in walk(path.join(output_dir, 'images')):
         for i,f in enumerate(files):
+            if f == 'cover.jpg':
+                continue
             if f.endswith('.jpg'):
                 mime = 'image/jpeg'
             elif f.endswith('.png'):
@@ -589,8 +605,8 @@ def command_line_args():
     parser.add_argument('--min-panels', default=3)
     parser.add_argument('--bg')
 
-    #parser.add_argument('--client-size', nargs=2, default=[500, 850], type=int)
-    parser.add_argument('--client-size', nargs=2, default=[960, 1280], type=int)
+    parser.add_argument('--client-size', nargs=2, default=[960, 1280], type=int, metavar='INT')
+    parser.add_argument('--jpg-quality', default=50, type=int, choices=range(1, 96), metavar='[1-95]')
 
     args = parser.parse_args()
 
