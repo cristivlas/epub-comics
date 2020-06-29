@@ -15,7 +15,7 @@ from os import chdir, getcwd, listdir, makedirs, path, rename, walk
 from panels import Extractor
 from xml.dom import minidom
 from lxml import etree as ET
-from PIL import Image
+from PIL import Image, JpegImagePlugin
 from pathvalidate import sanitize_filepath
 
 MAX_SCALE_FACTOR = 0.98
@@ -182,6 +182,8 @@ class Page:
 
     def _make_page(self, args, filename):        
         img = Extractor.open(filename)
+        self.quantization = getattr(img, 'quantization', None)
+        self.subsampling = JpegImagePlugin.get_sampling(img) if self.quantization else None
 
         if args.bg:
             bg = args.bg
@@ -215,15 +217,22 @@ class Page:
         makedirs(images_dir, exist_ok=True)
 
         (page, bg) = self._make_page(args, filename)
-        
+
+        self.save(args, page, output_dir)
+        self.size = page.size
+        self.create_bg_image_file(images_dir, bg)
+
+
+    def save(self, args, page, output_dir):
         fname = path.join(output_dir, self.filename)        
         if args.jpg_quality:
             page.save(fname, quality=args.jpg_quality)
         else:
-            page.save(fname, quality=100, subsampling=0)
-
-        self.size = page.size
-        self.create_bg_image_file(images_dir, bg)
+            if self.subsampling is None:
+                # save using PIL defaults
+                page.save(fname)
+            else:
+                page.save(fname, subsampling=self.subsampling, qtables=self.quantization)
 
     def enumerate_panels(self):
         return enumerate(self.panels, 1)
