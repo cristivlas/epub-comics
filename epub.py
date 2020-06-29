@@ -18,7 +18,7 @@ from lxml import etree as ET
 from PIL import Image
 from pathvalidate import sanitize_filepath
 
-MAX_SCALE_FACTOR = 0.95
+MAX_SCALE_FACTOR = 0.98
 SCRIPT = 'navigate.js'
 TRIM_MARGINS = True
 

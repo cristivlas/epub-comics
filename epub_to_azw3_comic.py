@@ -74,8 +74,7 @@ def fixup_metadata(oeb):
     oeb.metadata = metadata
     oeb.metadata.add('subject', 'Comics')
 
-def create_mobi_book(oeb, opts, resources, file_ext):
-    fixup_metadata(oeb)
+def create_kf8_book(oeb, opts, resources):
     writer = KF8Writer(oeb, opts, resources)
     book = KF8Book(writer, for_joint=False)
     dump_metadata(book.metadata)
@@ -96,7 +95,6 @@ def set_cover_image(oeb):
         if cover:
             oeb.metadata.add('cover', cover)
 
-                
 
 def opf_to_book(opf, outpath, container):
     from calibre.ebooks.conversion.plumber import Plumber, create_oebbook
@@ -112,9 +110,10 @@ def opf_to_book(opf, outpath, container):
     plumber.setup_options()
 
     oeb = create_oebbook(container.log, opf, plumber.opts, specialize=specialize)
+
+    fixup_metadata(oeb)
     set_cover_image(oeb)
 
-    # Generate KF8 Book
     plumber.opts.dont_compress = True
     plumber.opts.toc_title = None
     plumber.opts.mobi_toc_at_start = False
@@ -122,14 +121,15 @@ def opf_to_book(opf, outpath, container):
     plumber.opts.mobi_periodical = False
 
     res = Resources(oeb, plumber.opts, False, process_images=False)
-
-    book = create_mobi_book(oeb, plumber.opts, res, path.splitext(outpath)[1])
     
-    #... and write it out
-    book.opts.prefer_author_sort = False
-    book.opts.share_not_sync = False
-    print ('\nWriting out: {}\n'.format(outpath))
-    book.write(outpath)
+    if path.splitext(outpath)[1] != '.azw3':
+        plumber.run()
+    else:
+        book = create_kf8_book(oeb, plumber.opts, res)
+        book.opts.prefer_author_sort = False
+        book.opts.share_not_sync = False
+        print ('\nWriting out: {}\n'.format(outpath))
+        book.write(outpath)
 
 
 def epub_to_book(epub, outpath=None):
