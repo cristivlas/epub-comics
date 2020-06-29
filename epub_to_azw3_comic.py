@@ -87,7 +87,7 @@ def set_cover_image(oeb):
     else:
         cover = None
         for h, item in oeb.manifest.hrefs.items():
-            if item.id in [ 'cover-image', 'x_cover-image', 'img-0' ]:
+            if item.id in [ 'cover-image', 'x_cover-image' ]:
                 if not cover or item.id == 'cover-image':
                     cover = item.id
                     print ('Detected cover: {} href={}'.format(item.id, h))
@@ -117,7 +117,7 @@ def opf_to_book(opf, outpath, container):
     plumber.opts.dont_compress = True
     plumber.opts.toc_title = None
     plumber.opts.mobi_toc_at_start = False
-    plumber.opts.no_inline_toc = False
+    plumber.opts.no_inline_toc = True
     plumber.opts.mobi_periodical = False
 
     res = Resources(oeb, plumber.opts, False, process_images=False)

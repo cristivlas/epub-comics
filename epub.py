@@ -33,6 +33,15 @@ def pushd(new_dir):
     finally:
         chdir(previous_dir)
 
+@contextlib.contextmanager
+def cleanup(args, dir):
+    try:
+        yield
+    finally:
+        if not args.no_cleanup:
+            print ('Cleaning up: {}'.format(dir))
+            shutil.rmtree(dir)
+
 def scale_perc(x, scale, size):
     return '{}%'.format(round(100*x*scale/size, 2))
 
@@ -99,17 +108,23 @@ class Panel:
 def panel_id(page, ordinal):
     return '{}-{}'.format(page, ordinal)
 
-def add_comic_book_meta(args, metadata):
+def add_fixed_layout_kindle_tags(args, metadata):
     metadata.append(ET.Element('meta', {'name': 'orientation-lock', 'content': 'portrait'}))
     metadata.append(ET.Element('meta', {'name': 'fixed-layout', 'content': 'true'}))
     metadata.append(ET.Element('meta', {'name': 'book-type', 'content': 'comic'}))
     metadata.append(ET.Element('meta', {'name': 'zero-gutter', 'content': 'true'}))
     metadata.append(ET.Element('meta', {'name': 'zero-margin', 'content': 'true'}))
-    #metadata.append(ET.Element('meta', {'name': 'region-mag', 'content': 'true'}))
-    #metadata.append(ET.Element('meta', {'name': 'ke-border-color', 'content': '#000000'}))
-    #metadata.append(ET.Element('meta', {'name': 'ke-border-width', 'content': '3'}))
+    metadata.append(ET.Element('meta', {'name': 'region-mag', 'content': 'true'}))
     metadata.append(ET.Element('meta', {'name': 'original-resolution', 'content':'{}x{}'.format(*args.client_size)}))
     metadata.append(ET.Element('meta', {'name': 'primary-writing-mode', 'content': 'horizontal-lr' }))
+
+def add_fixed_layout_content_tags(args, metadata):
+    ET.SubElement(metadata, 'meta', { 'property':'rendition:layout' }).text = 'pre-paginated'
+    ET.SubElement(metadata, 'meta', { 'property':'rendition:orientation' }).text = 'portrait'
+    ET.SubElement(metadata, 'meta', { 'property':'rendition:spread' }).text = 'none'
+
+def add_fixed_layout_page_tags(args, metadata):
+    ET.SubElement(metadata, 'meta', { 'name':'viewport', 'content':'width=device-width, initial-scale=1' })
 
 
 class Page:
@@ -192,16 +207,20 @@ class Page:
         self.output_dir = output_dir
         self.client_size = client_size        
         self.panels = []
-        self.quality = args.jpg_quality
         images_dir = 'images'
-        img_filename = sanitize_filepath(filename, platform='auto')
+        img_filename = sanitize_filepath(filename, platform='auto').replace(' ', '')
         self.filename = path.join(images_dir, path.splitext(path.basename(img_filename))[0] + '.jpg')        
         print (self.filename)
         images_dir = path.join(output_dir, images_dir)
         makedirs(images_dir, exist_ok=True)
 
         (page, bg) = self._make_page(args, filename)
-        page.save(path.join(output_dir, self.filename), quality=self.quality)
+        
+        fname = path.join(output_dir, self.filename)        
+        if args.jpg_quality:
+            page.save(fname, quality=args.jpg_quality)
+        else:
+            page.save(fname, quality=100, subsampling=0)
 
         self.size = page.size
         self.create_bg_image_file(images_dir, bg)
@@ -224,6 +243,8 @@ class Page:
         head = ET.Element('head')
         html.append(head)
         head.append(ET.Element('meta', {'http-equiv': 'content-type', 'content': 'text/html; charset=utf-8'}))
+
+        add_fixed_layout_page_tags(args, head)
 
         body = ET.Element('body')
         html.append(body)
@@ -308,7 +329,13 @@ class Page:
                 f.write ('margin-{}: 0px;\n'.format(i))
             w,h = self.client_size
             f.write('width: {}px;\nheight: {}px;\n'.format(w, h))
-            f.write('}\nimg.singlePage {\n')
+            f.write('}\n')
+            
+            # f.write('img.singlePage {\n')
+            # f.write('width: 100vw;\n')
+            # f.write('}\n')
+
+            f.write('img.singlePage {\n')
             f.write('width: {}px;\nheight: {}px;\n'.format(w, h))
             f.write('min-width: {}px;\nmin-height: {}px;\n'.format(w, h))
             f.write('}\n')
@@ -351,7 +378,10 @@ def gen_content_opf(args, pages, output_dir):
             'unique-identifier': 'PrimaryID',
             'version': '3.0',
             '{http://www.w3.org/XML/1998/namespace}lang': 'en',
-            'xmlns': 'http://www.idpf.org/2007/opf'
+            'xmlns': 'http://www.idpf.org/2007/opf',
+
+            #See http://idpf.org/epub/fxl/#property-layout
+            'prefix': 'rendition: http://www.idpf.org/vocab/rendition/#',
         },
         nsmap={ 'xml': 'http://www.w3.org/XML/1998/namespace' })
 
@@ -363,7 +393,8 @@ def gen_content_opf(args, pages, output_dir):
     package.append(metadata)
     package.append(manifest)
     
-    add_comic_book_meta(args, metadata)
+    add_fixed_layout_kindle_tags(args, metadata)
+    add_fixed_layout_content_tags(args, metadata)
 
     # unique id
     e = ET.Element('{http://purl.org/dc/elements/1.1/}identifier', {'id': 'PrimaryID' })
@@ -418,10 +449,11 @@ def gen_content_opf(args, pages, output_dir):
     
     manifest.append(ET.Element('item', { 'href': 'css/amzn-ke-style-template.css', 'id':'css-template', 'media-type': 'text/css' }))
     manifest.append(ET.Element('item', { 'href': 'toc.ncx', 'id':'ncx', 'media-type': 'application/x-dtbncx+xml' }))
-    # <item href="toc.xml" id="toc" media-type="application/xhtml+xml"/>
-    manifest.append(ET.Element('item', { 'href': 'toc.xml', 'id':'toc', 'media-type': 'application/xhtml+xml' }))
-    # <item href="toc.xhtml" id="tocn" media-type="application/xhtml+xml" properties="nav"/>
-    manifest.append(ET.Element('item', { 'href': 'toc.xhtml', 'id':'tocn', 'media-type': 'application/xhtml+xml', 'properties': 'nav' }))
+    if not args.no_toc:        
+        # <item href="toc.xml" id="toc" media-type="application/xhtml+xml"/>
+        manifest.append(ET.Element('item', { 'href': 'toc.xml', 'id':'toc', 'media-type': 'application/xhtml+xml' }))
+        # <item href="toc.xhtml" id="tocn" media-type="application/xhtml+xml" properties="nav"/>
+        manifest.append(ET.Element('item', { 'href': 'toc.xhtml', 'id':'tocn', 'media-type': 'application/xhtml+xml', 'properties': 'nav' }))
 
     # write content.opf
     content = ET.tostring(package, encoding='utf-8', pretty_print=True)
@@ -458,7 +490,7 @@ def toc_list_para(cls, href, text=None):
     return p
 
 
-def gen_toc_xhtml(pages, output_dir):
+def gen_toc_xhtml(args, pages, output_dir):
     html = ET.Element('html', {'xmlns': 'http://www.w3.org/1999/xhtml'}, nsmap={'epub': 'http://www.idpf.org/2007/ops'})
 
     head = ET.Element('head') 
@@ -484,7 +516,7 @@ def gen_toc_xhtml(pages, output_dir):
     
     toc_list = ET.Element('ol')
     nav.append(toc_list)
-        
+
     toc_list.append(toc_list_item('level1-toc', 'toc.xml', 'Contents'))    
     for id, page, _ in pages:
         toc_list.append(toc_list_item(id, page, id.replace('-', ' ')))
@@ -494,7 +526,7 @@ def gen_toc_xhtml(pages, output_dir):
         f.write(toc.decode('utf-8'))
 
 
-def gen_toc_xml(pages, output_dir):
+def gen_toc_xml(args, pages, output_dir):
     html = ET.Element('html', {'xmlns': 'http://www.w3.org/1999/xhtml'}, nsmap={'epub': 'http://www.idpf.org/2007/ops'})
     head = ET.Element('head')
     html.append(head)
@@ -520,12 +552,12 @@ def gen_toc_xml(pages, output_dir):
         f.write(toc.decode('utf-8'))
 
 
-def gen_toc(pages, output_dir):
-    gen_toc_xhtml(pages, output_dir)
-    gen_toc_xml(pages, output_dir)
+def gen_toc(args, pages, output_dir):
+    gen_toc_xhtml(args, pages, output_dir)
+    gen_toc_xml(args, pages, output_dir)
 
 
-def gen_ncx(pages, output_dir):
+def gen_ncx(args, pages, output_dir):
     ncx = ET.Element('ncx',
         {'version': '2005-1',
         '{http://www.w3.org/XML/1998/namespace}lang': 'en',
@@ -536,27 +568,29 @@ def gen_ncx(pages, output_dir):
     ncx.append(head)
 
     head.append(ET.Element('meta', {'content': 'true', 'name': 'generated'}))
-    start_play_order = 1    
 
-    map = ET.Element('navMap')
-    ncx.append(map)
+    if not args.no_toc:
+        start_play_order = 1
 
-    point = ET.Element('navPoint', {
-            'class': 'toc',
-            'id': 'level1-toc',
-            'playOrder': '1'
-        })
-    point.append(ET.Element('content', {'src':'toc.xml'}))    
-    map.append(point)
+        map = ET.Element('navMap')
+        ncx.append(map)
 
-    for i, (id, page, _) in enumerate(pages):
         point = ET.Element('navPoint', {
-            'class': 'level-' + id,
-            'id': id,
-            'playOrder': str(i+1+start_play_order)
-        })
+                'class': 'toc',
+                'id': 'level1-toc',
+                'playOrder': '1'
+            })
+        point.append(ET.Element('content', {'src':'toc.xml'}))    
         map.append(point)
-        point.append(ET.Element('content', {'src': page}))
+
+        for i, (id, page, _) in enumerate(pages):
+            point = ET.Element('navPoint', {
+                'class': 'level-' + id,
+                'id': id,
+                'playOrder': str(i+1+start_play_order)
+            })
+            map.append(point)
+            point.append(ET.Element('content', {'src': page}))
 
     doctype = "<!DOCTYPE ncx PUBLIC '-//NISO//DTD ncx 2005-1//EN' 'http://www.daisy.org/z3986/2005/ncx-2005-1.dtd'>"
     navigation = ET.tostring(ncx, encoding='utf-8', pretty_print=True, xml_declaration=True, doctype=doctype)
@@ -564,9 +598,10 @@ def gen_ncx(pages, output_dir):
         f.write(navigation.decode('utf-8'))
 
 
-def gen_navigation_files(pages, output_dir):
-    gen_toc(pages, output_dir)
-    gen_ncx(pages, output_dir)
+def gen_navigation_files(args, pages, output_dir):
+    if not args.no_toc:
+        gen_toc(args, pages, output_dir)
+    gen_ncx(args, pages, output_dir)
 
 
 def command_line_args():
@@ -588,12 +623,12 @@ def command_line_args():
     # don't panelize if less than min-panels detected
     parser.add_argument('--min-panels', default=3)
     parser.add_argument('-cs','--client-size', nargs=2, default=[960, 1280], type=int, metavar='INT')
-    parser.add_argument('--jpg-quality', default=70, type=int, choices=range(1, 96), metavar='[1-95]')
+    parser.add_argument('--jpg-quality', type=int, choices=range(1, 96), metavar='[1-95]')
 
     parser.add_argument('--skip-landscape', action='store_true')
-    #TODO:
-    #parser.add_argument('--no-toc', action='store_true')
-    #parser.add_argument('--cleanup', action='store_true', help='remove -epub work dir on exit')
+    parser.add_argument('--no-toc', action='store_true')
+    # for debugging
+    parser.add_argument('--no-cleanup', action='store_true')
 
     args = parser.parse_args()
 
@@ -616,58 +651,59 @@ def main():
     output = path.basename(input_dir) + '.epub'
     output_dir = path.basename(input_dir) + '-epub'    
 
-    # setup META-INF and mimetype
-    shutil.copytree('META-INF', path.join(output_dir, 'META-INF'))    
-    with open(path.join(output_dir, 'mimetype'), 'w') as f:
-        f.write('application/epub+zip')
-    
-    # prepare content and CSS output locations
-    output_dir = path.join(output_dir, 'OEBPS')
-    css_dir = path.join(output_dir, 'css')
-    makedirs(css_dir)
+    with cleanup(args, output_dir):
+        # setup META-INF and mimetype
+        shutil.copytree('META-INF', path.join(output_dir, 'META-INF'))    
+        with open(path.join(output_dir, 'mimetype'), 'w') as f:
+            f.write('application/epub+zip')
+        
+        # prepare content and CSS output locations
+        output_dir = path.join(output_dir, 'OEBPS')
+        css_dir = path.join(output_dir, 'css')
+        makedirs(css_dir)
 
-    if args.cover:
-        img = Image.open(args.cover)
-        cover = path.join(output_dir, 'images')
-        makedirs(cover)
-        cover = path.join(cover, 'cover.jpg')
-        img.save(cover)
-    
-    pages = []
-    for f in sorted(listdir(input_dir)):
-        if path.splitext(f)[1] in [ '.jpg', '.png']:
-            f = path.join(input_dir, f)
-            if args.cover and path.realpath(f)==path.realpath(args.cover):
-                continue
-            page = Page(args, f, output_dir, client_size)
-            if page.landscape and args.skip_landscape:
-                print ('Landscape image skipped: {}'.format(path.basename(f)))
-                continue
-            i = len(pages)
-            pages.append(page.gen_html('page-{}'.format(i), args))
+        if args.cover:
+            img = Image.open(args.cover)
+            cover = path.join(output_dir, 'images')
+            makedirs(cover)
+            cover = path.join(cover, 'cover.jpg')
+            img.save(cover)
+        
+        pages = []
+        for f in sorted(listdir(input_dir)):
+            if path.splitext(f)[1] in [ '.jpg', '.png']:
+                f = path.join(input_dir, f)
+                if args.cover and path.realpath(f)==path.realpath(args.cover):
+                    continue
+                page = Page(args, f, output_dir, client_size)
+                if page.landscape and args.skip_landscape:
+                    print ('Landscape image skipped: {}'.format(path.basename(f)))
+                    continue
+                i = len(pages)
+                pages.append(page.gen_html('page-{}'.format(i), args))
 
-    # generate debug script for navigating panels
-    if args.js:
-        with open('script/zoom.js') as sf:
-            script = sf.read()
-            with open(path.join(output_dir, SCRIPT), 'w') as df:
-                df.write('var page_count = {}\n'.format(len(pages)))
-                df.write(script)
+        # generate debug script for navigating panels
+        if args.js:
+            with open('script/zoom.js') as sf:
+                script = sf.read()
+                with open(path.join(output_dir, SCRIPT), 'w') as df:
+                    df.write('var page_count = {}\n'.format(len(pages)))
+                    df.write(script)
 
-    # 'resource' files
-    res_files = ['css/amzn-ke-style-template.css']
-    for f in res_files:
-        shutil.copy(f, path.join(output_dir, f))            
+        # 'resource' files
+        res_files = ['css/amzn-ke-style-template.css']
+        for f in res_files:
+            shutil.copy(f, path.join(output_dir, f))            
 
-    gen_content_opf(args, pages, output_dir)
-    gen_navigation_files(pages, output_dir)
+        gen_content_opf(args, pages, output_dir)
+        gen_navigation_files(args, pages, output_dir)
 
-    with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root,_,files in walk(path.dirname(output_dir)):
-            for file in files:
-                fpath = path.join(root, file)
-                arcname = '/'.join(str(fpath).split('/')[1:])
-                zipf.write(fpath, arcname)
+        with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root,_,files in walk(path.dirname(output_dir)):
+                for file in files:
+                    fpath = path.join(root, file)
+                    arcname = '/'.join(str(fpath).split('/')[1:])
+                    zipf.write(fpath, arcname)
     
 if __name__ == '__main__':    
     with pushd(path.dirname(__file__)):
