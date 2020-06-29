@@ -181,25 +181,11 @@ class Page:
 
         min_size = min(img.size)/args.max_panels_per_edge
 
-        # wide (double?) page
-        if img.size[0] > img.size[1]:
-            aspect = img.size[1]/img.size[0]
-            client_aspect = self.client_size[1]/self.client_size[0]
-            # keep the client aspect, and also fit the image
-            size = [img.size[0], int(img.size[1]*client_aspect/aspect)]
-            # a temporary image to hold the page
-            page = Image.new('RGB', size, bg)
-            img = img.resize([page.size[0], int(page.size[1]*aspect)], Image.LANCZOS)
-            page.paste(img, [(i-j)//2 for i, j in zip(page.size, img.size)])
-            img = page
-            # force minimum JPEG quality
-            if self.quality < 80:
-                self.quality = 80
-            # don't panelize double pages
-            panels = {}
-        else:
-            panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(img)
+        self.landscape = img.size[0] > img.size[1]
+        if self.landscape:
+            img = img.rotate(90, expand=True)
 
+        panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(img)
         return self._trim(args, min_size, img, panels, bg), bg
 
     def __init__(self, args, filename, output_dir, client_size):
@@ -603,8 +589,9 @@ def command_line_args():
     parser.add_argument('--min-panels', default=3)
     parser.add_argument('-cs','--client-size', nargs=2, default=[960, 1280], type=int, metavar='INT')
     parser.add_argument('--jpg-quality', default=70, type=int, choices=range(1, 96), metavar='[1-95]')
+
+    parser.add_argument('--skip-landscape', action='store_true')
     #TODO:
-    #parser.add_argument('--skip-double-pages', action='store_true')
     #parser.add_argument('--no-toc', action='store_true')
     #parser.add_argument('--cleanup', action='store_true', help='remove -epub work dir on exit')
 
@@ -653,6 +640,9 @@ def main():
             if args.cover and path.realpath(f)==path.realpath(args.cover):
                 continue
             page = Page(args, f, output_dir, client_size)
+            if page.landscape and args.skip_landscape:
+                print ('Landscape image skipped: {}'.format(path.basename(f)))
+                continue
             i = len(pages)
             pages.append(page.gen_html('page-{}'.format(i), args))
 
@@ -679,7 +669,6 @@ def main():
                 arcname = '/'.join(str(fpath).split('/')[1:])
                 zipf.write(fpath, arcname)
     
-
 if __name__ == '__main__':    
     with pushd(path.dirname(__file__)):
         main()

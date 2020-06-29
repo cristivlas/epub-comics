@@ -65,7 +65,6 @@ def fixup_metadata(oeb):
         for i in v:
             if k=='language' and i.value=='eng':
                 metadata.add(k, 'en')
-                metadata.add('Fake Cover', 0)
             else:
                 metadata[k].append(i)
 
@@ -73,11 +72,12 @@ def fixup_metadata(oeb):
         metadata.add(k,v)
 
     oeb.metadata = metadata
+    oeb.metadata.add('subject', 'Comics')
 
-def create_kf8_book(oeb, opts, resources, for_joint=False):
+def create_mobi_book(oeb, opts, resources, file_ext):
     fixup_metadata(oeb)
     writer = KF8Writer(oeb, opts, resources)
-    book = KF8Book(writer, for_joint=for_joint)
+    book = KF8Book(writer, for_joint=False)
     dump_metadata(book.metadata)
     return book
 
@@ -120,10 +120,10 @@ def opf_to_book(opf, outpath, container):
     plumber.opts.mobi_toc_at_start = False
     plumber.opts.no_inline_toc = False
     plumber.opts.mobi_periodical = False
-    
+
     res = Resources(oeb, plumber.opts, False, process_images=False)
 
-    book = create_kf8_book(oeb, plumber.opts, res, False)
+    book = create_mobi_book(oeb, plumber.opts, res, path.splitext(outpath)[1])
     
     #... and write it out
     book.opts.prefer_author_sort = False
@@ -151,7 +151,11 @@ def main(argv=sys.argv):
         if len(sys.argv) > 2:
             output_path = sys.argv[2]
         else:
-            output_path = path.splitext(input_path)[0] + '.azw3'
+            if path.isdir(input_path):
+                output_path = input_path.replace('-epub', '.azw3').strip('/')
+            else:
+                output_path = path.splitext(input_path)[0] + '.azw3'
+
         patch_exth_codes()
         epub_to_book(input_path, output_path)
 
