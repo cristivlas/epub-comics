@@ -131,4 +131,7 @@ div.fs div.target-mag-text {
 div.target-mag-text div {
     position: relative;
 }
-
+/* 
+div.panel {
+  border: 2px solid green;
+} */

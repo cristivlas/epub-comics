@@ -1,7 +1,5 @@
 #! /usr/bin/calibre-debug
-#
-# calibre-debug
-#
+
 from calibre.ebooks.oeb.base import Manifest, Metadata
 from calibre.ebooks.oeb.polish.container import get_container
 from calibre.ebooks.mobi.writer2.resources import Resources
@@ -144,12 +142,12 @@ def extract_mobi(mobi_path, extract_to):
 
 
 def main(argv=sys.argv):
-    input_path = sys.argv[1]
+    input_path = argv[1]
     if input_path.endswith('.mobi'):
         extract_mobi(input_path, path.splitext(input_path)[0] + '_extracted_mobi')
     else:
-        if len(sys.argv) > 2:
-            output_path = sys.argv[2]
+        if len(argv) > 2:
+            output_path = argv[2]
         else:
             if path.isdir(input_path):
                 output_path = input_path.replace('-epub', '.azw3').strip('/')

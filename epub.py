@@ -12,7 +12,7 @@ import zipfile
 
 from bs4 import BeautifulSoup
 from os import chdir, getcwd, listdir, makedirs, path, rename, walk
-from panels import Extractor
+from panels import PanelExtractor as Extractor
 from xml.dom import minidom
 from lxml import etree as ET
 from PIL import Image, JpegImagePlugin
@@ -140,17 +140,14 @@ class Page:
                 self.panels.append(Panel(self.filename, img, [xy[0] + r * w, xy[1]], [(1.0 - r) * w, h]))
             else:
                 self.panels.append(Panel(self.filename, img, xy, panel_img.size))
+        print ('{}: {} panels'.format(self.filename, len(self.panels)))
 
     def _trim(self, args, min_size, img, panels, bg):
-        if len(panels) <= 1:
-            self._set_panels(args, img, panels)
-            return img
-        
         # heuristic
-        few_panels = len(panels) <= 3
+        few_panels = (len(panels) <= args.min_panels)
         if not TRIM_MARGINS or few_panels:
             page = Image.new('RGB', img.size, bg) 
-            if few_panels:
+            if few_panels or args.paste:
                 page.paste(img, (0,0))
             for _,(panel_img,xy) in panels.items():
                 assert len(xy)==2, xy
@@ -161,30 +158,29 @@ class Page:
 
         else:
             points = []
-            for _,(img,xy) in panels:
+            for _,(img,xy) in panels.items():
                 assert len(xy)==2, xy
                 points.append(xy)
                 points.append([i+j for i, j in zip(xy, img.size)])
             
-            margin = 50
+            margin = 20
             top_left = points[0]
             bottom_right = points[-1]
             size = [i-j+2*margin for i, j in zip(bottom_right, top_left)]
             
             page = Image.new('RGB', size, bg)
-            for _,(img,xy) in panels:
+            for _,(img,xy) in panels.items():
                 page.paste(img, [i-j+margin for i, j in zip(xy, top_left)])
 
-            panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(page)
-            self._set_panels(args, page, panels)        
-
+            self.frame.img = page
+            print ('{}: {} panels'.format(self.filename, len(panels)))
+            panels = Extractor('', threshold=args.threshold, min_size=min_size).from_frame(self.frame)
+            self._set_panels(args, page, panels)
         return page
 
     def _make_page(self, args, filename):        
-        img = Extractor.open(filename)
-        self.quantization = getattr(img, 'quantization', None)
-        self.subsampling = JpegImagePlugin.get_sampling(img) if self.quantization else None
-
+        self.frame = Extractor.open(filename)
+        img = self.frame.img
         if args.bg:
             bg = args.bg
             if bg.lower()=='none':
@@ -201,8 +197,8 @@ class Page:
         self.landscape = img.size[0] > img.size[1]
         if self.landscape:
             img = img.rotate(90, expand=True)
-
-        panels = Extractor('', threshold=args.threshold, min_size=min_size).panels_from_image(img)
+        self.frame.img = img
+        panels = Extractor('', threshold=args.threshold, min_size=min_size).from_frame(self.frame)
         return self._trim(args, min_size, img, panels, bg), bg
 
     def __init__(self, args, filename, output_dir, client_size):
@@ -212,7 +208,6 @@ class Page:
         images_dir = 'images'
         img_filename = sanitize_filepath(filename, platform='auto').replace(' ', '')
         self.filename = path.join(images_dir, path.splitext(path.basename(img_filename))[0] + '.jpg')        
-        print (self.filename)
         images_dir = path.join(output_dir, images_dir)
         makedirs(images_dir, exist_ok=True)
 
@@ -228,11 +223,7 @@ class Page:
         if args.jpg_quality:
             page.save(fname, quality=args.jpg_quality)
         else:
-            if self.subsampling is None:
-                # save using PIL defaults
-                page.save(fname)
-            else:
-                page.save(fname, subsampling=self.subsampling, qtables=self.quantization)
+            self.frame.save(fname, page)
 
     def enumerate_panels(self):
         return enumerate(self.panels, 1)
@@ -289,7 +280,7 @@ class Page:
         # pass one: div (regions for panels)
         for ordinal,_ in self.enumerate_panels():
             id = panel_id(root_name, ordinal)
-            div = ET.Element('div', {'id': 'reg-' + id})
+            div = ET.Element('div', {'id': 'reg-' + id, 'class': 'panel'})
             top.append(div)
             data = '"sourceId":"reg-{}", "targetId":"reg-{}-magTargetParent", "ordinal":{}'.format(id, id, ordinal)
             div.append(ET.Element('a', {'class': 'app-amzn-magnify', 'data-app-amzn-magnify': '{' + data + '}'}))
@@ -340,10 +331,6 @@ class Page:
             f.write('width: {}px;\nheight: {}px;\n'.format(w, h))
             f.write('}\n')
             
-            # f.write('img.singlePage {\n')
-            # f.write('width: 100vw;\n')
-            # f.write('}\n')
-
             f.write('img.singlePage {\n')
             f.write('width: {}px;\nheight: {}px;\n'.format(w, h))
             f.write('min-width: {}px;\nmin-height: {}px;\n'.format(w, h))
@@ -630,12 +617,13 @@ def command_line_args():
     # for determining the minimum required size of a panel
     parser.add_argument('--max-panels-per-edge', type=int, default=8)
     # don't panelize if less than min-panels detected
-    parser.add_argument('--min-panels', default=3)
+    parser.add_argument('--min-panels', type=int, default=3)
     parser.add_argument('-cs','--client-size', nargs=2, default=[960, 1280], type=int, metavar='INT')
     parser.add_argument('--jpg-quality', type=int, choices=range(1, 96), metavar='[1-95]')
 
     parser.add_argument('--skip-landscape', action='store_true')
     parser.add_argument('--no-toc', action='store_true')
+    parser.add_argument('--paste', action='store_true')
     # for debugging
     parser.add_argument('--no-cleanup', action='store_true')
 
