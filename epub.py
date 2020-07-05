@@ -11,17 +11,15 @@ import warnings
 import zipfile
 
 from bs4 import BeautifulSoup
+from enhance import auto_threshold, image_to_array, panelize_crop
 from os import chdir, getcwd, listdir, makedirs, path, rename, walk
-from panels import PanelExtractor as Extractor
-from xml.dom import minidom
-from lxml import etree as ET
 from PIL import Image, JpegImagePlugin
 from pathvalidate import sanitize_filepath
+from xml.dom import minidom
+from lxml import etree as ET
 
 MAX_SCALE_FACTOR = 0.98
 SCRIPT = 'navigate.js'
-TRIM_MARGINS = True
-
 
 @contextlib.contextmanager
 def pushd(new_dir):
@@ -49,22 +47,25 @@ def scale_perc(x, scale, size):
 def detect_background_color(img):
     # TODO: check all four corners? or is left-top enough for now?
     a = np.array(img)
-    color = tuple(a[0][0])
+    if len(a.shape) > 2:
+        color = tuple(a[0][0])
+    else:
+        color = (255,255,255)
     return color
 
 
 class Panel:
-    def __init__(self, filename, img, xy, size):
+    def __init__(self, filename, img_size, xy, size):
         assert len(xy)==2, xy
         assert len(size)==2, size
 
         self.xywh = list(xy) + list(size)
-        self.img_size = img.size
+        self.img_size = img_size
 
         if True:
             # corners as percentages
-            (self.left, self.top) = ['{}%'.format(round(i*100./j,2)) for i,j in zip(xy, img.size)]
-            (self.width, self.height) = ['{}%'.format(round(i*100./j,2)) for i,j in zip(size, img.size)]        
+            (self.left, self.top) = ['{}%'.format(round(i*100./j,2)) for i,j in zip(xy, img_size)]
+            (self.width, self.height) = ['{}%'.format(round(i*100./j,2)) for i,j in zip(size, img_size)]
         else:
             # ... as pixels
             (self.left, self.top) = ['{}px'.format(i) for i in xy]
@@ -128,78 +129,58 @@ def add_fixed_layout_page_tags(args, metadata):
 
 
 class Page:
-    def _set_panels(self, args, img:Image, panels:dict):
-        r = args.split_ratio
-        for panel_name in sorted(panels.keys()):
-            panel_img, xy = panels[panel_name]
-            assert len(xy)==2, xy            
-            w,h = panel_img.size
-            # split wide panels
-            if r > 0 and w > 2 * h:
-                self.panels.append(Panel(self.filename, img, xy, (r*w, h)))
-                self.panels.append(Panel(self.filename, img, [xy[0] + r * w, xy[1]], [(1.0 - r) * w, h]))
-            else:
-                self.panels.append(Panel(self.filename, img, xy, panel_img.size))
-        print ('{}: {} panels'.format(self.filename, len(self.panels)))
+    threshold = None
 
-    def _trim(self, args, min_size, img, panels, bg):
+    def _set_panels(self, args, img:Image, panels, min_size, bg):
+        panels = [(x,y,w,h) for (x,y,w,h) in panels if w > min_size and h > min_size]
+        #panels = sorted(panels, key=lambda p : (p[1],p[0]))
         # heuristic
         few_panels = (len(panels) <= args.min_panels)
-        if not TRIM_MARGINS or few_panels:
-            page = Image.new('RGB', img.size, bg) 
-            if few_panels or args.paste:
-                page.paste(img, (0,0))
-            for _,(panel_img,xy) in panels.items():
-                assert len(xy)==2, xy
-                page.paste(panel_img, xy[:2])
-                assert len(xy)==2, xy
-
-            self._set_panels(args, page, panels)
-
-        else:
-            points = []
-            for _,(img,xy) in panels.items():
-                assert len(xy)==2, xy
-                points.append(xy)
-                points.append([i+j for i, j in zip(xy, img.size)])
-            
-            margin = 20
-            top_left = points[0]
-            bottom_right = points[-1]
-            size = [i-j+2*margin for i, j in zip(bottom_right, top_left)]
-            
-            page = Image.new('RGB', size, bg)
-            for _,(img,xy) in panels.items():
-                page.paste(img, [i-j+margin for i, j in zip(xy, top_left)])
-
-            self.frame.img = page
-            print ('{}: {} panels'.format(self.filename, len(panels)))
-            panels = Extractor('', threshold=args.threshold, min_size=min_size).from_frame(self.frame)
-            self._set_panels(args, page, panels)
-        return page
+        if few_panels:
+            Page.threshold = None
+        page = Image.new('RGB', self.img.size, bg) 
+        if few_panels or args.paste:
+            page.paste(self.img, (0,0))
+        for (x,y,w,h) in panels:
+            page.paste(self.img.crop([x,y,x+w,y+h]),(x,y))
+        if not few_panels:
+            for (x,y,w,h) in panels:
+                self.panels.append(Panel(self.filename, img.size, (x,y), (w,h)))
+        print ('{}: {} panels'.format(self.filename, len(self.panels)))
+        return page, bg
 
     def _make_page(self, args, filename):        
-        self.frame = Extractor.open(filename)
-        img = self.frame.img
+        self.img = Image.open(filename)
+        self.quantization = getattr(self.img, 'quantization', None)
+        self.subsampling = JpegImagePlugin.get_sampling(self.img) if self.quantization else None
+
         if args.bg:
             bg = args.bg
             if bg.lower()=='none':
                 bg=None
         else:
-            bg = detect_background_color(img)            
+            bg = detect_background_color(self.img)
 
         if args.scale != 1.0:
             print ('Scaling image: {}'.format(args.scale))
-            img = img.resize([int(i*args.scale) for i in img.size])
+            self.img = self.img.resize([int(i*args.scale) for i in img.size])
 
-        min_size = min(img.size)/args.max_panels_per_edge
+        min_size = min(self.img.size)/args.max_panels_per_edge
 
-        self.landscape = img.size[0] > img.size[1]
+        self.landscape = self.img.size[0] > self.img.size[1]
         if self.landscape:
-            img = img.rotate(90, expand=True)
-        self.frame.img = img
-        panels = Extractor('', threshold=args.threshold, min_size=min_size).from_frame(self.frame)
-        return self._trim(args, min_size, img, panels, bg), bg
+            self.img = self.img.rotate(90, expand=True)
+        
+        im = image_to_array(self.img)
+
+        threshold = args.threshold        
+        if not threshold:
+            if Page.threshold is None:
+                Page.threshold, _ = auto_threshold(im)
+                print ('auto threshold:', Page.threshold)
+            threshold = Page.threshold
+        panels = panelize_crop(im, threshold)
+        return self._set_panels(args, self.img, panels, min_size, bg)
 
     def __init__(self, args, filename, output_dir, client_size):
         self.output_dir = output_dir
@@ -222,8 +203,10 @@ class Page:
         fname = path.join(output_dir, self.filename)        
         if args.jpg_quality:
             page.save(fname, quality=args.jpg_quality)
+        elif self.subsampling is None:
+            page.save(fname)            
         else:
-            self.frame.save(fname, page)
+            page.save(fname, subsampling=self.subsampling, qtables=self.quantization)
 
     def enumerate_panels(self):
         return enumerate(self.panels, 1)
@@ -608,12 +591,8 @@ def command_line_args():
     parser.add_argument('-t', '--title')
     parser.add_argument('--bg', help='background color (default is automatic)')
     parser.add_argument('--js', action='store_true', help='embed Javascript for debugging')
-    # for splitting wide panels (default is no split)
-    parser.add_argument('-s', '--split-ratio', type=float, default=0)
     parser.add_argument('--scale', default=1.0, type=float)
-    # trim and repanel
-    parser.add_argument('--trim', action='store_true', help='trim margins')
-    parser.add_argument('--threshold', type=int, default=200, help='panel detection threshold')
+    parser.add_argument('--threshold', type=int, help='panel detection threshold')
     # for determining the minimum required size of a panel
     parser.add_argument('--max-panels-per-edge', type=int, default=8)
     # don't panelize if less than min-panels detected
@@ -628,10 +607,6 @@ def command_line_args():
     parser.add_argument('--no-cleanup', action='store_true')
 
     args = parser.parse_args()
-
-    global TRIM_MARGINS
-    TRIM_MARGINS = args.trim
-
     return args
 
 
