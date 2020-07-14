@@ -1,12 +1,12 @@
 #! /usr/bin/calibre-debug
 
-from calibre.ebooks.oeb.base import Manifest, Metadata
+from calibre.ebooks.oeb.base import Manifest, Metadata, xpath
 from calibre.ebooks.oeb.polish.container import get_container
 from calibre.ebooks.mobi.writer2.resources import Resources
 from calibre.ebooks.mobi.writer8.main import KF8Writer
 from calibre.ebooks.mobi.writer8.mobi import KF8Book
 from calibre.ebooks.mobi.writer8.exth import EXTH_CODES
-
+from calibre.ebooks.oeb.reader import OEBReader
 
 import sys
 from os import path
@@ -72,9 +72,21 @@ def fixup_metadata(oeb):
     oeb.metadata = metadata
     oeb.metadata.add('subject', 'Comics')
 
+        
 def create_kf8_book(oeb, opts, resources):
+
+    # I need to know to text_length without CSS
+    class DummyKF8Writer(KF8Writer):
+        def extract_css_into_flows(self):
+            pass
+
+    dummy_writer = DummyKF8Writer(oeb, opts, resources)
     writer = KF8Writer(oeb, opts, resources)
     book = KF8Book(writer, for_joint=False)
+
+    # This gets written to the MOBI header
+    book.text_length = dummy_writer.text_length
+
     dump_metadata(book.metadata)
     return book
 
@@ -107,7 +119,15 @@ def opf_to_book(opf, outpath, container):
     plumber = Plumber(opf, outpath, container.log)
     plumber.setup_options()
 
-    oeb = create_oebbook(container.log, opf, plumber.opts, specialize=specialize)
+    class Reader(OEBReader):
+        def _metadata_from_opf(self, opf):
+            for e in xpath(opf, 'o2:metadata//o2:meta'):
+                if e.attrib.get('name') == 'original-resolution':
+                    comic_book_exth_values['original-resolution'] = e.attrib.get('content', '660x800')
+            return OEBReader._metadata_from_opf(self, opf)
+
+
+    oeb = create_oebbook(container.log, opf, plumber.opts, specialize=specialize, reader=Reader)
 
     fixup_metadata(oeb)
     set_cover_image(oeb)
@@ -123,7 +143,7 @@ def opf_to_book(opf, outpath, container):
     if path.splitext(outpath)[1] != '.azw3':
         plumber.run()
     else:
-        book = create_kf8_book(oeb, plumber.opts, res)
+        book = create_kf8_book(oeb, plumber.opts, res)        
         book.opts.prefer_author_sort = False
         book.opts.share_not_sync = False
         print ('\nWriting out: {}\n'.format(outpath))
@@ -142,6 +162,7 @@ def extract_mobi(mobi_path, extract_to):
 
 
 def main(argv=sys.argv):
+
     input_path = argv[1]
     if input_path.endswith('.mobi'):
         extract_mobi(input_path, path.splitext(input_path)[0] + '_extracted_mobi')

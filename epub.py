@@ -4,6 +4,7 @@
 #
 import argparse
 import contextlib
+import cv2
 import numpy as np
 import shutil
 import uuid
@@ -11,9 +12,9 @@ import warnings
 import zipfile
 
 from bs4 import BeautifulSoup
-from enhance import auto_threshold, image_to_array, panelize_crop
+from panelize import auto_threshold, change_resolution, image_to_array, panelize_crop, panelize_contours
 from os import chdir, getcwd, listdir, makedirs, path, rename, walk
-from PIL import Image, JpegImagePlugin
+from PIL import Image, ImageDraw, JpegImagePlugin
 from pathvalidate import sanitize_filepath
 from xml.dom import minidom
 from lxml import etree as ET
@@ -129,28 +130,28 @@ def add_fixed_layout_page_tags(args, metadata):
 
 
 class Page:
-    threshold = None
+    threshold,kern_size,iters = None, 2, 1
 
-    def _set_panels(self, args, img:Image, panels, min_size, bg):
-        panels = [(x,y,w,h) for (x,y,w,h) in panels if w > min_size and h > min_size]
-        #panels = sorted(panels, key=lambda p : (p[1],p[0]))
-        # heuristic
-        few_panels = (len(panels) <= args.min_panels)
-        if few_panels:
-            Page.threshold = None
-        page = Image.new('RGB', self.img.size, bg) 
-        if few_panels or args.paste:
-            page.paste(self.img, (0,0))
-        for (x,y,w,h) in panels:
-            page.paste(self.img.crop([x,y,x+w,y+h]),(x,y))
-        if not few_panels:
+    def _set_panels(self, args, img:Image, panels, bg):
+        # filter out small panels
+        min_size = min(self.img.size)/args.max_panels_per_edge
+        panels = [(x,y,w,h) for (x,y,w,h) in panels if w >= min_size and h >= min_size]
+
+        # enforce that page contains a minimum number of panels
+        have_sufficient_panels = (len(panels) >= args.min_panels)
+        if not have_sufficient_panels:
+            # reset auto computed params
+            Page.threshold, Page.kern_size, Page.iters = None, 2, 1
+
+        if have_sufficient_panels:
             for (x,y,w,h) in panels:
                 self.panels.append(Panel(self.filename, img.size, (x,y), (w,h)))
         print ('{}: {} panels'.format(self.filename, len(self.panels)))
-        return page, bg
+        return self.img, bg
 
-    def _make_page(self, args, filename):        
+    def _make_page(self, args, filename):
         self.img = Image.open(filename)
+        #self.img = change_resolution(self.img, [8.5, 11], 320, False)
         self.quantization = getattr(self.img, 'quantization', None)
         self.subsampling = JpegImagePlugin.get_sampling(self.img) if self.quantization else None
 
@@ -163,9 +164,7 @@ class Page:
 
         if args.scale != 1.0:
             print ('Scaling image: {}'.format(args.scale))
-            self.img = self.img.resize([int(i*args.scale) for i in img.size])
-
-        min_size = min(self.img.size)/args.max_panels_per_edge
+            self.img = self.img.resize([int(i*args.scale) for i in self.img.size])
 
         self.landscape = self.img.size[0] > self.img.size[1]
         if self.landscape:
@@ -176,11 +175,14 @@ class Page:
         threshold = args.threshold        
         if not threshold:
             if Page.threshold is None:
-                Page.threshold, _ = auto_threshold(im)
+                #Page.threshold, _ = auto_threshold(im)
+                Page.threshold = np.mean(im)
                 print ('auto threshold:', Page.threshold)
             threshold = Page.threshold
-        panels = panelize_crop(im, threshold)
-        return self._set_panels(args, self.img, panels, min_size, bg)
+        #panels = panelize_crop(im, threshold)
+        #im = cv2.convertScaleAbs(im, alpha=2.5)
+        panels, Page.kern_size, Page.iters = panelize_contours(im, threshold, Page.kern_size, Page.iters)
+        return self._set_panels(args, self.img, panels, bg)
 
     def __init__(self, args, filename, output_dir, client_size):
         self.output_dir = output_dir
@@ -200,6 +202,7 @@ class Page:
 
 
     def save(self, args, page, output_dir):
+        #page = change_resolution(page, [8.5, 11], 160, False)
         fname = path.join(output_dir, self.filename)        
         if args.jpg_quality:
             page.save(fname, quality=args.jpg_quality)
@@ -355,7 +358,7 @@ def gen_content_opf(args, pages, output_dir):
     package = ET.Element('package',
         {
             'unique-identifier': 'PrimaryID',
-            'version': '3.0',
+            'version': '2.0',
             '{http://www.w3.org/XML/1998/namespace}lang': 'en',
             'xmlns': 'http://www.idpf.org/2007/opf',
 
@@ -428,6 +431,7 @@ def gen_content_opf(args, pages, output_dir):
     
     manifest.append(ET.Element('item', { 'href': 'css/amzn-ke-style-template.css', 'id':'css-template', 'media-type': 'text/css' }))
     manifest.append(ET.Element('item', { 'href': 'toc.ncx', 'id':'ncx', 'media-type': 'application/x-dtbncx+xml' }))
+
     if not args.no_toc:        
         # <item href="toc.xml" id="toc" media-type="application/xhtml+xml"/>
         manifest.append(ET.Element('item', { 'href': 'toc.xml', 'id':'toc', 'media-type': 'application/xhtml+xml' }))
@@ -548,12 +552,14 @@ def gen_ncx(args, pages, output_dir):
 
     head.append(ET.Element('meta', {'content': 'true', 'name': 'generated'}))
 
-    if not args.no_toc:
-        start_play_order = 1
+    start_play_order = 1
 
-        map = ET.Element('navMap')
-        ncx.append(map)
+    map = ET.Element('navMap')
+    ncx.append(map)
 
+    if args.no_toc:
+        pass
+    else:
         point = ET.Element('navPoint', {
                 'class': 'toc',
                 'id': 'level1-toc',
@@ -602,7 +608,6 @@ def command_line_args():
 
     parser.add_argument('--skip-landscape', action='store_true')
     parser.add_argument('--no-toc', action='store_true')
-    parser.add_argument('--paste', action='store_true')
     # for debugging
     parser.add_argument('--no-cleanup', action='store_true')
 
